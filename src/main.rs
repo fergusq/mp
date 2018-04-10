@@ -209,6 +209,7 @@ where
 // PARSER ////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 
+#[derive(Clone)]
 enum Type {
     Boolean(),
     Integer(),
@@ -275,7 +276,7 @@ fn parse_program(tokens: &mut TokenList) -> Vec<Statement> {
 }
 
 fn parse_block(tokens: &mut TokenList) -> Vec<Statement> {
-    let stmts = Vec::new();
+    let mut stmts = Vec::new();
     stmts.extend(parse_statement(tokens));
     while tokens.try_accept(";") {
         if tokens.next_is("end") {
@@ -301,6 +302,7 @@ fn parse_type(tokens: &mut TokenList) -> Type {
             let subtype = parse_type(tokens);
             Type::Array(Box::new(subtype), size)
         }
+        _ => panic!("syntax error")
     }
 }
 
@@ -325,16 +327,18 @@ fn parse_statement(tokens: &mut TokenList) -> Vec<Statement> {
             _ => panic!("")
         }
     }
-    panic!("")
+    else {
+        panic!("");
+    }
 }
 
 fn parse_single_statement(tokens: &mut TokenList) -> Statement {
     let place = tokens.place;
-    let statements = parse_statement(tokens);
+    let mut statements = parse_statement(tokens);
     if statements.len() != 1 {
         panic!("{} invalid statement", tokens.error_context(place));
     }
-    statements[0]
+    statements.pop().unwrap()
 }
 
 fn parse_function_def(tokens: &mut TokenList, is_proc: bool) -> Statement {
@@ -355,7 +359,7 @@ fn parse_function_def(tokens: &mut TokenList, is_proc: bool) -> Statement {
 }
 
 fn parse_parameters(tokens: &mut TokenList) -> Vec<Parameter> {
-    let params = Vec::new();
+    let mut params = Vec::new();
     if !tokens.next_is(")") {
         params.push(parse_parameter(tokens));
         while tokens.try_accept(",") {
@@ -375,14 +379,14 @@ fn parse_parameter(tokens: &mut TokenList) -> Parameter {
 
 fn parse_variable_def(tokens: &mut TokenList) -> Vec<Statement> {
     tokens.accept("var");
-    let names = Vec::new();
+    let mut names = Vec::new();
     names.push(tokens.accept_identifier());
     while tokens.try_accept(",") {
         names.push(tokens.accept_identifier());
     }
     tokens.accept(":");
     let vtype = parse_type(tokens);
-    names.into_iter().map(|n| Statement::Definition(Definition::Variable(n, vtype))).collect()
+    names.into_iter().map(|n| Statement::Definition(Definition::Variable(n, vtype.clone()))).collect()
 }
 
 fn parse_return(tokens: &mut TokenList) -> Statement {
@@ -431,7 +435,8 @@ fn parse_binary_operator(operator: String) -> BinaryOperator {
         "%" => BinaryOperator::Mod,
 
         "and" => BinaryOperator::And,
-        "or" => BinaryOperator::Or
+        "or" => BinaryOperator::Or,
+        _ => panic!()
     }
 }
 
@@ -439,7 +444,8 @@ fn parse_unary_operator(operator: String) -> UnaryOperator {
     match &operator[..] {
         "+" => UnaryOperator::Plus,
         "-" => UnaryOperator::Minus,
-        "not" => UnaryOperator::Not
+        "not" => UnaryOperator::Not,
+        _ => panic!()
     }
 }
 
@@ -448,9 +454,12 @@ macro_rules! precedence_level {
         fn $name(tokens: &mut TokenList) -> ExpressionBox {
             let mut lhs = $subexpr_parser(tokens);
             while tokens.next_in($operator_list) {
-                let Some(Token { value: TokenValue::Word(kw), line: _ }) = tokens.next();
-                let operator = parse_binary_operator(kw);
-                lhs = ExpressionBox { expr: Box::new(Expression::BiOperator(operator, lhs, $subexpr_parser(tokens))) }
+                if let Some(Token { value: TokenValue::Word(kw), line: _ }) = tokens.next() {
+                    let operator = parse_binary_operator(kw);
+                    lhs = ExpressionBox { expr: Box::new(Expression::BiOperator(operator, lhs, $subexpr_parser(tokens))) }
+                } else {
+                    panic!();
+                }
             }
             lhs
         }
@@ -477,9 +486,11 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                 match &word2[..] {
                     "(" => {
                         // FUNCTION CALL
+                        unimplemented!();
                     },
                     "[" => {
                         // INDEX
+                        unimplemented!();
                     },
                     _ => {
                         return ExpressionBox { expr: Box::new(Expression::Variable(word)) };
@@ -496,5 +507,6 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
         Some(Token { value: TokenValue::Real(x), line: _ }) => {
             return ExpressionBox { expr: Box::new(Expression::Real(x)) };
         },
+        _ => panic!("syntax error")
     }
 }
