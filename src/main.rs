@@ -251,7 +251,8 @@ enum Expression {
     BiOperator(BinaryOperator, ExpressionBox, ExpressionBox),
     UnOperator(UnaryOperator, ExpressionBox),
     Call(String, Vec<ExpressionBox>),
-    Index(ExpressionBox, ExpressionBox)
+    Index(ExpressionBox, ExpressionBox),
+    Variable(String)
 }
 
 enum BinaryOperator {
@@ -468,6 +469,10 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                 tokens.accept(")");
                 return expr;
             }
+            if word == "not" {
+                let expr = parse_factor(tokens);
+                return expr;
+            }
             if let Some(Token { value: TokenValue::Word(word2), line: _ }) = tokens.peek() {
                 match &word2[..] {
                     "(" => {
@@ -476,14 +481,20 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                     "[" => {
                         // INDEX
                     },
+                    _ => {
+                        return ExpressionBox { expr: Box::new(Expression::Variable(word)) };
+                    }
                 }
+            }
+            else {
+                return ExpressionBox { expr: Box::new(Expression::Variable(word)) };
             }
         },
         Some(Token { value: TokenValue::Integer(x), line: _ }) => {
-            return ExpressionBox { expr: Box::new(Expression::Integer(x)) }
+            return ExpressionBox { expr: Box::new(Expression::Integer(x)) };
         },
         Some(Token { value: TokenValue::Real(x), line: _ }) => {
-            return ExpressionBox { expr: Box::new(Expression::Real(x)) }
+            return ExpressionBox { expr: Box::new(Expression::Real(x)) };
         },
     }
 }
