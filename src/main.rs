@@ -68,6 +68,15 @@ impl TokenList {
         }
     }
 
+    fn next_in(&self, kws: &[&str]) -> bool {
+        if let Some(Token { value: TokenValue::Word(word), line: _ }) = self.peek() {
+            kws.contains(&word.as_str())
+        }
+        else {
+            false
+        }
+    }
+
     fn accept(&mut self, kw: &str) {
         if let Some(Token { value: TokenValue::Word(word), line: _ }) = self.next() {
             if word == kw {
@@ -222,32 +231,37 @@ struct Parameter {
 
 enum Statement {
     Definition(Definition),
-    Assign(Expression, Expression),
+    Assign(ExpressionBox, ExpressionBox),
     SimpleReturn(),
-    Return(Expression),
-    Read(Vec<String>),
-    Write(Vec<Expression>),
-    Assert(Expression),
-    IfElse(Expression, Box<Statement>, Box<Statement>),
-    While(Expression, Box<Statement>),
+    Return(ExpressionBox),
+    IfElse(ExpressionBox, Box<Statement>, Box<Statement>),
+    While(ExpressionBox, Box<Statement>),
     Block(Vec<Statement>),
-    Expression(Expression),
+    Expression(ExpressionBox),
     Nop()
+}
+
+struct ExpressionBox {
+    expr: Box<Expression>
 }
 
 enum Expression {
     Integer(i32),
     Real(f32),
-    BiOperator(Operator, Box<Expression>, Box<Expression>),
-    UnOperator(Operator, Box<Expression>),
-    Call(String, Vec<Expression>),
-    Index(Box<Expression>, Box<Expression>)
+    BiOperator(BinaryOperator, ExpressionBox, ExpressionBox),
+    UnOperator(UnaryOperator, ExpressionBox),
+    Call(String, Vec<ExpressionBox>),
+    Index(ExpressionBox, ExpressionBox)
 }
 
-enum Operator {
+enum BinaryOperator {
     Eq, Neq, Lt, Leq, Gt, Geq,
     Add, Sub, Mul, Div, Mod,
-    And, Or, Not
+    And, Or
+}
+
+enum UnaryOperator {
+    Plus, Minus, Not, Size
 }
 
 fn parse_program(tokens: &mut TokenList) -> Vec<Statement> {
@@ -400,9 +414,76 @@ fn parse_while(tokens: &mut TokenList) -> Statement {
     Statement::While(cond, Box::new(body))
 }
 
-fn parse_expression(tokens: &mut TokenList) -> Expression {
-    let lhs = parse_simple_expression(tokens);
-    while tokens.next_is("=") || tokens.next_is("<") || tokens.next_is(">") {
-        
+fn parse_binary_operator(operator: String) -> BinaryOperator {
+    match &operator[..] {
+        "<" => BinaryOperator::Lt,
+        ">" => BinaryOperator::Gt,
+        "<=" => BinaryOperator::Leq,
+        ">=" => BinaryOperator::Geq,
+        "<>" => BinaryOperator::Neq,
+        "=" => BinaryOperator::Eq,
+
+        "+" => BinaryOperator::Add,
+        "-" => BinaryOperator::Sub,
+        "*" => BinaryOperator::Mul,
+        "/" => BinaryOperator::Div,
+        "%" => BinaryOperator::Mod,
+
+        "and" => BinaryOperator::And,
+        "or" => BinaryOperator::Or
+    }
+}
+
+fn parse_unary_operator(operator: String) -> UnaryOperator {
+    match &operator[..] {
+        "+" => UnaryOperator::Plus,
+        "-" => UnaryOperator::Minus,
+        "not" => UnaryOperator::Not
+    }
+}
+
+macro_rules! precedence_level {
+    ($name:ident, $subexpr_parser:ident, $operator_list:expr) => {
+        fn $name(tokens: &mut TokenList) -> ExpressionBox {
+            let mut lhs = $subexpr_parser(tokens);
+            while tokens.next_in($operator_list) {
+                let Some(Token { value: TokenValue::Word(kw), line: _ }) = tokens.next();
+                let operator = parse_binary_operator(kw);
+                lhs = ExpressionBox { expr: Box::new(Expression::BiOperator(operator, lhs, $subexpr_parser(tokens))) }
+            }
+            lhs
+        }
+    };
+}
+
+precedence_level!(parse_expression, parse_simple_expression, &["=", "<>", "<", ">", "<=", ">="]);
+precedence_level!(parse_simple_expression, parse_term, &["+", "-", "or"]);
+precedence_level!(parse_term, parse_factor, &["*", "/", "%", "and"]);
+
+fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
+    match tokens.next() {
+        Some(Token { value: TokenValue::Word(word), line: _ }) => {
+            if word == "(" {
+                let expr = parse_expression(tokens);
+                tokens.accept(")");
+                return expr;
+            }
+            if let Some(Token { value: TokenValue::Word(word2), line: _ }) = tokens.peek() {
+                match &word2[..] {
+                    "(" => {
+                        // FUNCTION CALL
+                    },
+                    "[" => {
+                        // INDEX
+                    },
+                }
+            }
+        },
+        Some(Token { value: TokenValue::Integer(x), line: _ }) => {
+            return ExpressionBox { expr: Box::new(Expression::Integer(x)) }
+        },
+        Some(Token { value: TokenValue::Real(x), line: _ }) => {
+            return ExpressionBox { expr: Box::new(Expression::Real(x)) }
+        },
     }
 }
