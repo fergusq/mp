@@ -2,9 +2,11 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 fn main() {
+    let tokens = &mut lex("program kissa; var i : integer; begin var j : integer; end.");
+    println!("{:?}", tokens);
     println!(
         "{:?}",
-        lex("kissa, koira ja kala 5 3 1.2 1.0e3\nf(2+2)").tokens
+        parse_program(tokens)
     );
 }
 
@@ -29,6 +31,7 @@ struct Token {
     line: i32,
 }
 
+#[derive(Debug)]
 struct TokenList {
     tokens: Vec<Token>,
     place: usize
@@ -36,17 +39,20 @@ struct TokenList {
 
 impl TokenList {
     fn peek(&self) -> Option<Token> {
-        if self.eof() {
-            None
+        let mut i = self.place;
+        while i < self.tokens.len() {
+            match self.tokens[i].value {
+                TokenValue::Whitespace(_) => {i += 1; continue;},
+                _ => return Some(self.tokens[i].clone())
+            }
+            i += 1;
         }
-        else {
-            Some(self.tokens[self.place-1].clone())
-        }
+        None
     }
 
     fn next(&mut self) -> Option<Token> {
         let val = self.peek();
-        self.place += 1;
+        self.place += 1; // TODO whitespacet
         val
     }
 
@@ -55,7 +61,7 @@ impl TokenList {
     }
 
     fn error_context(&self, place: usize) -> String {
-        let token = &self.tokens[place];
+        let token = &self.tokens[if place == 0 {place} else {place-1}];
         format!("[line {}, token {:?}]", token.line, token.value)
     }
 
@@ -135,10 +141,10 @@ fn lex(code: &str) -> TokenList {
             });
         } else if chr.is_whitespace() {
             let whitespace = parse_token(&mut chars, char::is_whitespace);
-            tokens.push(Token {
+            /*tokens.push(Token {
                 value: TokenValue::Whitespace(whitespace.clone()),
                 line: line,
-            });
+            });*/
             line += whitespace.matches("\n").count() as i32;
         } else {
             tokens.push(Token {
@@ -210,6 +216,7 @@ where
 //////////////////////////////////////////////////////////////////////////////
 
 #[derive(Clone)]
+#[derive(Debug)]
 enum Type {
     Boolean(),
     Integer(),
@@ -219,17 +226,20 @@ enum Type {
     Void()
 }
 
+#[derive(Debug)]
 enum Definition {
     Function(String, Vec<Parameter>, Type, Vec<Statement>),
     Variable(String, Type)
 }
 
+#[derive(Debug)]
 struct Parameter {
     name: String,
     vtype: Type,
     is_ref: bool
 }
 
+#[derive(Debug)]
 enum Statement {
     Definition(Definition),
     Assign(ExpressionBox, ExpressionBox),
@@ -242,10 +252,12 @@ enum Statement {
     Nop()
 }
 
+#[derive(Debug)]
 struct ExpressionBox {
     expr: Box<Expression>
 }
 
+#[derive(Debug)]
 enum Expression {
     Integer(i32),
     Real(f32),
@@ -256,12 +268,14 @@ enum Expression {
     Variable(String)
 }
 
+#[derive(Debug)]
 enum BinaryOperator {
     Eq, Neq, Lt, Leq, Gt, Geq,
     Add, Sub, Mul, Div, Mod,
     And, Or
 }
 
+#[derive(Debug)]
 enum UnaryOperator {
     Plus, Minus, Not, Size
 }
@@ -456,7 +470,7 @@ macro_rules! precedence_level {
             while tokens.next_in($operator_list) {
                 if let Some(Token { value: TokenValue::Word(kw), line: _ }) = tokens.next() {
                     let operator = parse_binary_operator(kw);
-                    lhs = ExpressionBox { expr: Box::new(Expression::BiOperator(operator, lhs, $subexpr_parser(tokens))) }
+                    lhs = ExpressionBox { expr: Box::new(Expression::BiOperator(operator, lhs, $subexpr_parser(tokens))) };
                 } else {
                     panic!();
                 }
@@ -468,7 +482,17 @@ macro_rules! precedence_level {
 
 precedence_level!(parse_expression, parse_simple_expression, &["=", "<>", "<", ">", "<=", ">="]);
 precedence_level!(parse_simple_expression, parse_term, &["+", "-", "or"]);
-precedence_level!(parse_term, parse_factor, &["*", "/", "%", "and"]);
+precedence_level!(parse_term, parse_size, &["*", "/", "%", "and"]);
+
+fn parse_size(tokens: &mut TokenList) -> ExpressionBox {
+    let mut lhs = parse_factor(tokens);
+    while tokens.next_is(".") {
+        tokens.accept(".");
+        tokens.accept("size");
+        lhs = ExpressionBox { expr: Box::new(Expression::UnOperator(UnaryOperator::Size, lhs)) };
+    }
+    lhs
+}
 
 fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
     match tokens.next() {
