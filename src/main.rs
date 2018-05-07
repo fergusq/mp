@@ -1,5 +1,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 fn main() {
     let tokens = &mut lex("program kissa; var i : integer; begin var j : integer; end.");
@@ -217,21 +219,25 @@ where
 
 #[derive(Clone)]
 #[derive(Debug)]
+#[derive(PartialEq)]
 enum Type {
-    Boolean(),
-    Integer(),
-    Real(),
-    String(),
+    Boolean,
+    Integer,
+    Real,
+    String,
     Array(Box<Type>, i32),
-    Void()
+    Void,
+    Error
 }
 
+#[derive(Clone)]
 #[derive(Debug)]
 enum Definition {
-    Function(String, Vec<Parameter>, Type, Vec<Statement>),
+    Function(String, Vec<Parameter>, Type, Rc<Vec<Statement>>),
     Variable(String, Type)
 }
 
+#[derive(Clone)]
 #[derive(Debug)]
 struct Parameter {
     name: String,
@@ -242,7 +248,6 @@ struct Parameter {
 #[derive(Debug)]
 enum Statement {
     Definition(Definition),
-    Assign(ExpressionBox, ExpressionBox),
     SimpleReturn(),
     Return(ExpressionBox),
     IfElse(ExpressionBox, Box<Statement>, Box<Statement>),
@@ -254,17 +259,25 @@ enum Statement {
 
 #[derive(Debug)]
 struct ExpressionBox {
-    expr: Box<Expression>
+    expr: Box<Expression>,
+    etype: Option<Type>
+}
+
+impl ExpressionBox {
+    fn new(expr: Expression) -> ExpressionBox {
+        ExpressionBox { expr: Box::new(expr), etype: None } 
+    }
 }
 
 #[derive(Debug)]
 enum Expression {
     Integer(i32),
     Real(f32),
+    Assign(ExpressionBox, ExpressionBox),
     BiOperator(BinaryOperator, ExpressionBox, ExpressionBox),
     UnOperator(UnaryOperator, ExpressionBox),
     Call(String, Vec<ExpressionBox>),
-    Index(ExpressionBox, ExpressionBox),
+    Index(String, ExpressionBox),
     Variable(String)
 }
 
@@ -284,7 +297,7 @@ fn parse_program(tokens: &mut TokenList) -> Vec<Statement> {
     tokens.accept("program");
     let id = tokens.accept_identifier();
     tokens.accept(";");
-    let mut block = parse_block(tokens);
+    let block = parse_block(tokens);
     tokens.accept(".");
     return block;
 }
@@ -304,10 +317,10 @@ fn parse_block(tokens: &mut TokenList) -> Vec<Statement> {
 fn parse_type(tokens: &mut TokenList) -> Type {
     let typename = tokens.accept_identifier();
     match &typename[..] {
-        "Boolean" => Type::Boolean(),
-        "integer" => Type::Integer(),
-        "real" => Type::Real(),
-        "string" => Type::String(),
+        "Boolean" => Type::Boolean,
+        "integer" => Type::Integer,
+        "real" => Type::Real,
+        "string" => Type::String,
         "array" => {
             tokens.accept("[");
             let size = tokens.accept_integer();
@@ -321,7 +334,7 @@ fn parse_type(tokens: &mut TokenList) -> Type {
 }
 
 fn parse_statement(tokens: &mut TokenList) -> Vec<Statement> {
-    if let Some(Token { value: val, line: line }) = tokens.peek() {
+    if let Some(Token { value: val, line: _ }) = tokens.peek() {
         match val {
             TokenValue::Word(kw) => match &kw[..] {
                 "procedure" => vec![parse_function_def(tokens, true)],
@@ -361,7 +374,7 @@ fn parse_function_def(tokens: &mut TokenList, is_proc: bool) -> Statement {
     tokens.accept("(");
     let parameters = parse_parameters(tokens);
     let vtype = if is_proc {
-        Type::Void()
+        Type::Void
     } else {
         tokens.accept(":");
         parse_type(tokens)
@@ -369,7 +382,7 @@ fn parse_function_def(tokens: &mut TokenList, is_proc: bool) -> Statement {
     tokens.accept("begin");
     let body = parse_block(tokens);
     tokens.accept("end");
-    Statement::Definition(Definition::Function(name, parameters, vtype, body))
+    Statement::Definition(Definition::Function(name, parameters, vtype, Rc::new(body)))
 }
 
 fn parse_parameters(tokens: &mut TokenList) -> Vec<Parameter> {
@@ -470,7 +483,7 @@ macro_rules! precedence_level {
             while tokens.next_in($operator_list) {
                 if let Some(Token { value: TokenValue::Word(kw), line: _ }) = tokens.next() {
                     let operator = parse_binary_operator(kw);
-                    lhs = ExpressionBox { expr: Box::new(Expression::BiOperator(operator, lhs, $subexpr_parser(tokens))) };
+                    lhs = ExpressionBox::new(Expression::BiOperator(operator, lhs, $subexpr_parser(tokens)));
                 } else {
                     panic!();
                 }
@@ -489,7 +502,7 @@ fn parse_size(tokens: &mut TokenList) -> ExpressionBox {
     while tokens.next_is(".") {
         tokens.accept(".");
         tokens.accept("size");
-        lhs = ExpressionBox { expr: Box::new(Expression::UnOperator(UnaryOperator::Size, lhs)) };
+        lhs = ExpressionBox::new(Expression::UnOperator(UnaryOperator::Size, lhs));
     }
     lhs
 }
@@ -502,35 +515,168 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                 tokens.accept(")");
                 return expr;
             }
-            if word == "not" {
+            if word == "not" || word == "+" || word == "-" {
                 let expr = parse_factor(tokens);
-                return expr;
+                return ExpressionBox::new(Expression::UnOperator(parse_unary_operator(word), expr));
             }
             if let Some(Token { value: TokenValue::Word(word2), line: _ }) = tokens.peek() {
-                match &word2[..] {
+                let expr = match &word2[..] {
                     "(" => {
-                        // FUNCTION CALL
-                        unimplemented!();
+                        tokens.accept("(");
+                        let mut args = Vec::new();
+                        if !tokens.next_is(")") {
+                            args.push(parse_expression(tokens));
+                            while tokens.try_accept(",") {
+                                args.push(parse_expression(tokens));
+                            }
+                        }
+                        ExpressionBox::new(Expression::Call(word, args))
                     },
                     "[" => {
-                        // INDEX
-                        unimplemented!();
+                        tokens.accept("[");
+                        let index = parse_expression(tokens);
+                        tokens.accept("]");
+                        ExpressionBox::new(Expression::Index(word, index))
                     },
                     _ => {
-                        return ExpressionBox { expr: Box::new(Expression::Variable(word)) };
+                        ExpressionBox::new(Expression::Variable(word))
                     }
-                }
+                };
+                return if tokens.try_accept(":=") {
+                    let rexpr = parse_expression(tokens);
+                    ExpressionBox::new(Expression::Assign(expr, rexpr))
+                } else {
+                    expr
+                };
             }
             else {
-                return ExpressionBox { expr: Box::new(Expression::Variable(word)) };
+                return ExpressionBox::new(Expression::Variable(word));
             }
         },
         Some(Token { value: TokenValue::Integer(x), line: _ }) => {
-            return ExpressionBox { expr: Box::new(Expression::Integer(x)) };
+            return ExpressionBox::new(Expression::Integer(x));
         },
         Some(Token { value: TokenValue::Real(x), line: _ }) => {
-            return ExpressionBox { expr: Box::new(Expression::Real(x)) };
+            return ExpressionBox::new(Expression::Real(x));
         },
         _ => panic!("syntax error")
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// SEMANTIC ANALYSIS /////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+struct Nametable {
+    names: HashMap<String, Definition>,
+    parent: Option<Box<Nametable>>
+}
+
+impl Nametable {
+    fn new(parent: Option<Box<Nametable>>) -> Nametable {
+        Nametable { names: HashMap::new(), parent: parent }
+    }
+    fn find_definition(&self, name: &String) -> &Definition {
+        if let Some(def) = self.names.get(name) {
+            def
+        }
+        else if let Some(ref nt) = self.parent {
+            nt.find_definition(name)
+        }
+        else {
+            panic!("symbol not found: {}", name);
+        }
+    }
+}
+
+fn check_types(a: &Type, b: &Type) -> bool {
+    if *a == Type::Error || *b == Type::Error {
+        true
+    } else {
+        *a == *b
+    }
+}
+
+fn analyse_block(block: &mut Vec<Statement>, parent: Option<Box<Nametable>>) {
+    let mut nt = Nametable::new(parent);
+    for stmt in block {
+        if let &mut Statement::Definition(ref def) = stmt {
+            let name = match *def {
+                Definition::Function(ref name, _, _, _) => name,
+                Definition::Variable(ref name, _) => name
+            };
+            nt.names.insert(name.clone(), def.clone());
+        }
+    }
+}
+
+fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
+    match *expr.expr {
+        Expression::BiOperator(_, ref mut a, ref mut b) => {
+            analyse_expr(a, nt);
+            analyse_expr(b, nt);
+            if !check_types(&a.etype.clone().unwrap(), &b.etype.clone().unwrap()) {
+                panic!("Type mismatch");
+            }
+        }
+        Expression::UnOperator(UnaryOperator::Plus, ref mut a) => {
+            analyse_expr(a, nt);
+            if !check_types(&a.etype.clone().unwrap(), &Type::Integer)
+                || !check_types(&a.etype.clone().unwrap(), &Type::Real) {
+                panic!("Type mismatch");
+            }
+        }
+        Expression::Assign(ref mut var, ref mut val) => {
+            analyse_expr(val, nt);
+        }
+        _ => {}
+    }
+    expr.etype = Option::Some(predict_type(expr, nt));
+}
+
+fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
+    match *expr.expr {
+        Expression::Integer(_) => Type::Integer,
+        Expression::Real(_) => Type::Real,
+        Expression::BiOperator(BinaryOperator::Add, ref a, _) => a.etype.clone().unwrap(),
+        Expression::BiOperator(BinaryOperator::Sub, ref a, _) => a.etype.clone().unwrap(),
+        Expression::BiOperator(BinaryOperator::Mul, ref a, _) => a.etype.clone().unwrap(),
+        Expression::BiOperator(BinaryOperator::Div, ref a, _) => a.etype.clone().unwrap(),
+        Expression::BiOperator(BinaryOperator::Mod, ref a, _) => a.etype.clone().unwrap(),
+        Expression::UnOperator(UnaryOperator::Plus, ref a) => a.etype.clone().unwrap(),
+        Expression::UnOperator(UnaryOperator::Minus, ref a) => a.etype.clone().unwrap(),
+        Expression::UnOperator(UnaryOperator::Size, _) => Type::Integer,
+        Expression::BiOperator(BinaryOperator::Lt, _, _) => Type::Boolean,
+        Expression::BiOperator(BinaryOperator::Gt, _, _) => Type::Boolean,
+        Expression::BiOperator(BinaryOperator::Leq, _, _) => Type::Boolean,
+        Expression::BiOperator(BinaryOperator::Geq, _, _) => Type::Boolean,
+        Expression::BiOperator(BinaryOperator::Neq, _, _) => Type::Boolean,
+        Expression::BiOperator(BinaryOperator::Eq, _, _) => Type::Boolean,
+        Expression::BiOperator(BinaryOperator::And, _, _) => Type::Boolean,
+        Expression::BiOperator(BinaryOperator::Or, _, _) => Type::Boolean,
+        Expression::UnOperator(UnaryOperator::Not, _) => Type::Boolean,
+        Expression::Variable(ref name) => {
+            if let &Definition::Variable(_, ref t) = nt.find_definition(&name) {
+                t.clone()
+            } else {
+                panic!("not a variable: {}", name)
+            }
+        },
+        Expression::Index(ref name, _) => {
+            if let &Definition::Variable(_, Type::Array(ref t, _)) = nt.find_definition(&name) {
+                (**t).clone()
+            } else {
+                panic!("not an array: {}", name)
+            }
+        },
+        Expression::Call(ref name, _) => {
+            if let &Definition::Function(_, _, ref t, _) = nt.find_definition(name) {
+                t.clone()
+            } else {
+                panic!("not a function: {}", name)
+            }
+        },
+        Expression::Assign(_, ref rexpr) => rexpr.etype.clone().unwrap(),
+        _ => Type::Void
     }
 }
