@@ -2,6 +2,7 @@ use std::iter::Peekable;
 use std::str::Chars;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 fn main() {
     let tokens = &mut lex("program kissa; var i : integer; begin var j : integer; end.");
@@ -47,7 +48,6 @@ impl TokenList {
                 TokenValue::Whitespace(_) => {i += 1; continue;},
                 _ => return Some(self.tokens[i].clone())
             }
-            i += 1;
         }
         None
     }
@@ -233,8 +233,8 @@ enum Type {
 #[derive(Clone)]
 #[derive(Debug)]
 enum Definition {
-    Function(String, Vec<Parameter>, Type, Rc<Vec<Statement>>),
-    Variable(String, Type)
+    Function(String, Vec<Parameter>, Type, Rc<RefCell<Statement>>),
+    Variable(Parameter)
 }
 
 #[derive(Clone)]
@@ -245,16 +245,22 @@ struct Parameter {
     is_ref: bool
 }
 
+impl Parameter {
+    fn new(name: String, vtype: Type, is_ref: bool) -> Parameter {
+        Parameter { name: name, vtype: vtype, is_ref: is_ref }
+    }
+}
+
 #[derive(Debug)]
 enum Statement {
     Definition(Definition),
-    SimpleReturn(),
+    SimpleReturn,
     Return(ExpressionBox),
     IfElse(ExpressionBox, Box<Statement>, Box<Statement>),
     While(ExpressionBox, Box<Statement>),
     Block(Vec<Statement>),
     Expression(ExpressionBox),
-    Nop()
+    Nop
 }
 
 #[derive(Debug)]
@@ -278,7 +284,7 @@ enum Expression {
     UnOperator(UnaryOperator, ExpressionBox),
     Call(String, Vec<ExpressionBox>),
     Index(String, ExpressionBox),
-    Variable(String)
+    Variable(String, Box<bool>)
 }
 
 #[derive(Debug)]
@@ -295,7 +301,7 @@ enum UnaryOperator {
 
 fn parse_program(tokens: &mut TokenList) -> Vec<Statement> {
     tokens.accept("program");
-    let id = tokens.accept_identifier();
+    let _id = tokens.accept_identifier();
     tokens.accept(";");
     let block = parse_block(tokens);
     tokens.accept(".");
@@ -379,10 +385,8 @@ fn parse_function_def(tokens: &mut TokenList, is_proc: bool) -> Statement {
         tokens.accept(":");
         parse_type(tokens)
     };
-    tokens.accept("begin");
-    let body = parse_block(tokens);
-    tokens.accept("end");
-    Statement::Definition(Definition::Function(name, parameters, vtype, Rc::new(body)))
+    let body = parse_single_statement(tokens);
+    Statement::Definition(Definition::Function(name, parameters, vtype, Rc::new(RefCell::new(body))))
 }
 
 fn parse_parameters(tokens: &mut TokenList) -> Vec<Parameter> {
@@ -413,13 +417,13 @@ fn parse_variable_def(tokens: &mut TokenList) -> Vec<Statement> {
     }
     tokens.accept(":");
     let vtype = parse_type(tokens);
-    names.into_iter().map(|n| Statement::Definition(Definition::Variable(n, vtype.clone()))).collect()
+    names.into_iter().map(|n| Statement::Definition(Definition::Variable(Parameter::new(n, vtype.clone(), false)))).collect()
 }
 
 fn parse_return(tokens: &mut TokenList) -> Statement {
     tokens.accept("return");
     if tokens.next_is(";") || tokens.next_is("end") {
-        Statement::SimpleReturn()
+        Statement::SimpleReturn
     } else {
         Statement::Return(parse_expression(tokens))
     }
@@ -433,7 +437,7 @@ fn parse_if(tokens: &mut TokenList) -> Statement {
     let otherwise = if tokens.try_accept("else") {
         parse_single_statement(tokens)
     } else {
-        Statement::Nop()
+        Statement::Nop
     };
     Statement::IfElse(cond, Box::new(then), Box::new(otherwise))
 }
@@ -539,7 +543,7 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                         ExpressionBox::new(Expression::Index(word, index))
                     },
                     _ => {
-                        ExpressionBox::new(Expression::Variable(word))
+                        ExpressionBox::new(Expression::Variable(word, Box::new(false)))
                     }
                 };
                 return if tokens.try_accept(":=") {
@@ -550,7 +554,7 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                 };
             }
             else {
-                return ExpressionBox::new(Expression::Variable(word));
+                return ExpressionBox::new(Expression::Variable(word, Box::new(false)));
             }
         },
         Some(Token { value: TokenValue::Integer(x), line: _ }) => {
@@ -568,24 +572,32 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
 //////////////////////////////////////////////////////////////////////////////
 
 struct Nametable {
-    names: HashMap<String, Definition>,
-    parent: Option<Box<Nametable>>
+    stack: Vec<HashMap<String, Definition>>,
+    return_type: Type
 }
 
 impl Nametable {
-    fn new(parent: Option<Box<Nametable>>) -> Nametable {
-        Nametable { names: HashMap::new(), parent: parent }
+    fn new(return_type: Type) -> Nametable {
+        Nametable { stack: Vec::new(), return_type: return_type }
+    }
+    fn push(&mut self) {
+        self.stack.push(HashMap::new());
+    }
+    fn pop(&mut self) {
+        self.stack.pop();
+    }
+    fn peek(&mut self) -> &mut HashMap<String, Definition> {
+        self.stack.last_mut().unwrap()
     }
     fn find_definition(&self, name: &String) -> &Definition {
-        if let Some(def) = self.names.get(name) {
-            def
+        let mut i = self.stack.len()-1;
+        while i >= 0 {
+            if let Some(def) = self.stack[i].get(name) {
+                return def;
+            }
+            i -= 1;
         }
-        else if let Some(ref nt) = self.parent {
-            nt.find_definition(name)
-        }
-        else {
-            panic!("symbol not found: {}", name);
-        }
+        panic!("symbol not found: {}", name);
     }
 }
 
@@ -597,37 +609,154 @@ fn check_types(a: &Type, b: &Type) -> bool {
     }
 }
 
-fn analyse_block(block: &mut Vec<Statement>, parent: Option<Box<Nametable>>) {
-    let mut nt = Nametable::new(parent);
+fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable) {
+    nt.push();
     for stmt in block {
         if let &mut Statement::Definition(ref def) = stmt {
             let name = match *def {
                 Definition::Function(ref name, _, _, _) => name,
-                Definition::Variable(ref name, _) => name
+                Definition::Variable(Parameter { name: ref name, .. }) => name
             };
-            nt.names.insert(name.clone(), def.clone());
+            nt.peek().insert(name.clone(), def.clone());
         }
+        analyse_stmt(stmt, nt);
+    }
+    nt.pop();
+}
+
+fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
+    match stmt {
+        &mut Statement::Definition(Definition::Function(ref _name, ref mut params, ref return_type, ref mut body)) => {
+            let mut new_nt = Nametable::new(return_type.clone());
+            new_nt.push();
+            let mut nonlocals = Vec::new();
+            for map in &nt.stack {
+                for (name, def) in map {
+                    let new_def = match def {
+                        &Definition::Function(_, _, _, _) => def.clone(),
+                        &Definition::Variable(ref par) => {
+                            let new_par = Parameter::new(par.name.clone(), par.vtype.clone(), true);
+                            nonlocals.push(new_par.clone());
+                            Definition::Variable(new_par.clone())
+                        }
+                    };
+                    new_nt.peek().insert(name.clone(), new_def.clone());
+                }
+            }
+            nt.push();
+            for param in &*params {
+                new_nt.peek().insert(param.name.clone(), Definition::Variable(param.clone()));
+            }
+            
+            // lisätään nonlokaalit parametreihin
+            params.extend(nonlocals);
+            
+            analyse_stmt(&mut *body.borrow_mut(), &mut new_nt);
+        }
+        &mut Statement::Definition(Definition::Variable(_)) => {}
+        &mut Statement::Block(ref mut stmts) => {
+            analyse_block(stmts, nt);
+        }
+        &mut Statement::Expression(ref mut expr) => {
+            analyse_expr(expr, &nt);
+        }
+        &mut Statement::Return(ref mut expr) => {
+            analyse_expr(expr, &nt);
+            if !check_types(&expr.etype.clone().unwrap(), &nt.return_type) {
+                panic!("Type mismatch: incorrect return type");
+            }
+        }
+        &mut Statement::SimpleReturn => {}
+        &mut Statement::IfElse(ref mut cond, ref mut then, ref mut otherwise) => {
+            analyse_expr(cond, nt);
+            if !check_types(&cond.etype.clone().unwrap(), &Type::Boolean) {
+                panic!("Type mismatch: if condition must be boolean");
+            }
+            analyse_stmt(then, nt);
+            analyse_stmt(otherwise, nt);
+        }
+        &mut Statement::While(ref mut cond, ref mut body) => {
+            analyse_expr(cond, nt);
+            if !check_types(&cond.etype.clone().unwrap(), &Type::Boolean) {
+                panic!("Type mismatch: while condition must be boolean");
+            }
+            analyse_stmt(body, nt);
+        }
+        &mut Statement::Nop => {}
     }
 }
 
 fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
-    match *expr.expr {
-        Expression::BiOperator(_, ref mut a, ref mut b) => {
+    match &mut *expr.expr {
+        &mut Expression::BiOperator(_, ref mut a, ref mut b) => {
             analyse_expr(a, nt);
             analyse_expr(b, nt);
             if !check_types(&a.etype.clone().unwrap(), &b.etype.clone().unwrap()) {
                 panic!("Type mismatch");
             }
         }
-        Expression::UnOperator(UnaryOperator::Plus, ref mut a) => {
+        &mut Expression::UnOperator(UnaryOperator::Plus, ref mut a) => {
             analyse_expr(a, nt);
             if !check_types(&a.etype.clone().unwrap(), &Type::Integer)
                 || !check_types(&a.etype.clone().unwrap(), &Type::Real) {
                 panic!("Type mismatch");
             }
         }
-        Expression::Assign(ref mut var, ref mut val) => {
+        &mut Expression::Assign(ref mut var, ref mut val) => {
+            analyse_expr(var, nt);
             analyse_expr(val, nt);
+            match &mut *var.expr {
+                &mut Expression::Variable(ref name, ref mut reference) => {
+                    if let &Definition::Variable(Parameter { vtype: ref t, is_ref: ref it, .. }) = nt.find_definition(&name) {
+                        if !check_types(&val.etype.clone().unwrap(), &t) {
+                            panic!("Type mismatch: lval has wrong type")
+                        }
+                        **reference = *it;
+                    }
+                    else {
+                        panic!("Left side of assignment is not lval");
+                    }
+                }
+                &mut Expression::Index(ref name, ref mut index) => {
+                    analyse_expr(index, nt);
+                    if !check_types(&index.etype.clone().unwrap(), &Type::Integer) {
+                        panic!("Type mismatch: index must be integer")
+                    }
+                    if let &Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. }) = nt.find_definition(&name) {
+                        if !check_types(&val.etype.clone().unwrap(), &t) {
+                            panic!("Type mismatch")
+                        }
+                    }
+                    else {
+                        panic!("Type mismatch: array expected");
+                    }
+                }
+                _ => panic!("Left side of assignment is not lval")
+            }
+        }
+        &mut Expression::Call(ref name, ref mut args) => {
+            for arg in &mut *args {
+                analyse_expr(arg, nt);
+            }
+            if let &Definition::Function(_, ref params, _, _) = nt.find_definition(&name) {
+                for (ref arg, ref param) in args.iter().zip(params.iter()) {
+                    if !check_types(&arg.etype.clone().unwrap(), &param.vtype) {
+                        panic!("Type mismatch: wrong argument type")
+                    }
+                }
+            }
+            
+            // lisätään nonlokaalit argumenteiksi
+            for map in &nt.stack {
+                for (name, def) in map {
+                    match def {
+                        &Definition::Variable(ref par) => {
+                            args.push(ExpressionBox::new(Expression::Variable(par.name.clone(), Box::new(true))));
+                        }
+                        _ => {}
+                    };
+                }
+            }
         }
         _ => {}
     }
@@ -655,15 +784,15 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
         Expression::BiOperator(BinaryOperator::And, _, _) => Type::Boolean,
         Expression::BiOperator(BinaryOperator::Or, _, _) => Type::Boolean,
         Expression::UnOperator(UnaryOperator::Not, _) => Type::Boolean,
-        Expression::Variable(ref name) => {
-            if let &Definition::Variable(_, ref t) = nt.find_definition(&name) {
+        Expression::Variable(ref name, _) => {
+            if let &Definition::Variable(Parameter { vtype: ref t, .. }) = nt.find_definition(&name) {
                 t.clone()
             } else {
                 panic!("not a variable: {}", name)
             }
         },
         Expression::Index(ref name, _) => {
-            if let &Definition::Variable(_, Type::Array(ref t, _)) = nt.find_definition(&name) {
+            if let &Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. }) = nt.find_definition(&name) {
                 (**t).clone()
             } else {
                 panic!("not an array: {}", name)
