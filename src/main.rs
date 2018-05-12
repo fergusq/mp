@@ -3,14 +3,15 @@ use std::str::Chars;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::fmt;
 
 fn main() {
-    let tokens = &mut lex("program kissa; var i : integer; begin var j : integer; end.");
+    let tokens = &mut lex("program kissa; var i : integer; function f(i : integer) : integer ; begin return i+1 end; begin var j : integer; end.");
+    let tree = &mut parse_program(tokens);
     println!("{:?}", tokens);
-    println!(
-        "{:?}",
-        parse_program(tokens)
-    );
+    println!("{:?}", tree);
+    analyse_block(tree, &mut Nametable::new(Type::Void));
+    println!("{:?}", tree);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -126,6 +127,10 @@ fn is_valid_identifier_char(chr: char) -> bool {
     return chr.is_alphanumeric() || chr == '_';
 }
 
+fn is_valid_operator_char(chr: char) -> bool {
+    return ['<', '>', '='].contains(&chr);
+}
+
 fn lex(code: &str) -> TokenList {
     let mut tokens = Vec::new();
     let mut chars = code.chars().peekable();
@@ -134,6 +139,11 @@ fn lex(code: &str) -> TokenList {
         if chr.is_alphabetic() || chr == '_' {
             tokens.push(Token {
                 value: TokenValue::Word(parse_token(&mut chars, is_valid_identifier_char)),
+                line: line,
+            })
+        } else if is_valid_operator_char(chr) {
+            tokens.push(Token {
+                value: TokenValue::Word(parse_token(&mut chars, is_valid_operator_char)),
                 line: line,
             })
         } else if chr.is_numeric() {
@@ -149,10 +159,9 @@ fn lex(code: &str) -> TokenList {
             });*/
             line += whitespace.matches("\n").count() as i32;
         } else {
+            chars.next();
             tokens.push(Token {
-                value: TokenValue::Word(parse_token(&mut chars, |c| {
-                    !is_valid_identifier_char(c) && !c.is_whitespace()
-                })),
+                value: TokenValue::Word(chr.to_string()),
                 line: line,
             });
         }
@@ -228,6 +237,21 @@ enum Type {
     Array(Box<Type>, i32),
     Void,
     Error
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Type::Boolean => write!(f, "boolean"),
+            Type::Integer => write!(f, "integer"),
+            Type::Real => write!(f, "real"),
+            Type::String => write!(f, "string"),
+            Type::Array(ref t, -1) => write!(f, "array of {}", t),
+            Type::Array(ref t, i) => write!(f, "array [{}] of {}", i, t),
+            Type::Void => write!(f, "void"),
+            Type::Error => write!(f, "(unknown)")
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -379,12 +403,14 @@ fn parse_function_def(tokens: &mut TokenList, is_proc: bool) -> Statement {
     let name = tokens.accept_identifier();
     tokens.accept("(");
     let parameters = parse_parameters(tokens);
+    tokens.accept(")");
     let vtype = if is_proc {
         Type::Void
     } else {
         tokens.accept(":");
         parse_type(tokens)
     };
+    tokens.accept(";");
     let body = parse_single_statement(tokens);
     Statement::Definition(Definition::Function(name, parameters, vtype, Rc::new(RefCell::new(body))))
 }
@@ -590,9 +616,9 @@ impl Nametable {
         self.stack.last_mut().unwrap()
     }
     fn find_definition(&self, name: &String) -> &Definition {
-        let mut i = self.stack.len()-1;
-        while i >= 0 {
-            if let Some(def) = self.stack[i].get(name) {
+        let mut i = self.stack.len();
+        while i > 0 {
+            if let Some(def) = self.stack[i-1].get(name) {
                 return def;
             }
             i -= 1;
@@ -663,14 +689,14 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
         &mut Statement::Return(ref mut expr) => {
             analyse_expr(expr, &nt);
             if !check_types(&expr.etype.clone().unwrap(), &nt.return_type) {
-                panic!("Type mismatch: incorrect return type");
+                panic!("Type mismatch: incorrect return type: expected {}, got {}", nt.return_type, expr.etype.clone().unwrap());
             }
         }
         &mut Statement::SimpleReturn => {}
         &mut Statement::IfElse(ref mut cond, ref mut then, ref mut otherwise) => {
             analyse_expr(cond, nt);
             if !check_types(&cond.etype.clone().unwrap(), &Type::Boolean) {
-                panic!("Type mismatch: if condition must be boolean");
+                panic!("Type mismatch: if condition must be boolean: expected boolean, got {}", cond.etype.clone().unwrap());
             }
             analyse_stmt(then, nt);
             analyse_stmt(otherwise, nt);
@@ -709,7 +735,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 &mut Expression::Variable(ref name, ref mut reference) => {
                     if let &Definition::Variable(Parameter { vtype: ref t, is_ref: ref it, .. }) = nt.find_definition(&name) {
                         if !check_types(&val.etype.clone().unwrap(), &t) {
-                            panic!("Type mismatch: lval has wrong type")
+                            panic!("Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype.clone().unwrap())
                         }
                         **reference = *it;
                     }
@@ -724,11 +750,11 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                     }
                     if let &Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. }) = nt.find_definition(&name) {
                         if !check_types(&val.etype.clone().unwrap(), &t) {
-                            panic!("Type mismatch")
+                            panic!("Type mismatch: expected {}, got {}", t, val.etype.clone().unwrap())
                         }
                     }
                     else {
-                        panic!("Type mismatch: array expected");
+                        panic!("Type mismatch: expected array");
                     }
                 }
                 _ => panic!("Left side of assignment is not lval")
@@ -741,7 +767,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             if let &Definition::Function(_, ref params, _, _) = nt.find_definition(&name) {
                 for (ref arg, ref param) in args.iter().zip(params.iter()) {
                     if !check_types(&arg.etype.clone().unwrap(), &param.vtype) {
-                        panic!("Type mismatch: wrong argument type")
+                        panic!("Type mismatch: wrong argument type: expected {}, got {}", param.vtype, arg.etype.clone().unwrap())
                     }
                 }
             }
@@ -807,5 +833,51 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
         },
         Expression::Assign(_, ref rexpr) => rexpr.etype.clone().unwrap(),
         _ => Type::Void
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// CODE GENERATION ///////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+struct CodeGenerator {
+    indent: i8
+}
+
+impl CodeGenerator {
+    fn generate(&self, code: String) {
+        for _ in [0..self.indent] {
+            print!(" ");
+        }
+        println!(code);
+    }
+    
+    fn generate_str(&self, code: &str) {
+        self.generate(String::from(code));
+    }
+
+    fn generate_stmt(&mut self, stmt: &Statement) {
+        match *stmt {
+            Statement::Block(stmts) => {
+                self.generate_str("{");
+                self.indent += 1;
+                for stmt in stmts {
+                    self.generate_stmt(stmts);
+                }
+                self.indent -= 1;
+                self.generate_str("}");
+            }
+            Statement::Expression(expr) => {
+                self.generate_expr(expr);
+            }
+            Statement::Return(expr) => {
+                let var = self.generate_expr(expr);
+                self.generate(format!("return {};", var));
+            }
+        }
+    }
+    
+    fn generate_expr(&mut self, expr: &ExpressionBox) {
+    
     }
 }
