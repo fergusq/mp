@@ -12,7 +12,7 @@ fn main() {
     println!("{:?}", tree);
     analyse_block(tree, &mut Nametable::new(Type::Void));
     println!("{:?}", tree);
-    let cg = CodeGenerator::new();
+    let mut cg = CodeGenerator::new();
     for stmt in tree {
         cg.generate_stmt(stmt);
     }
@@ -845,16 +845,26 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
 //////////////////////////////////////////////////////////////////////////////
 
 impl Type {
-    fn to_c(&self, var: String) -> String {
+    fn to_c(&self, var: &String) -> String {
         match *self {
             Type::Boolean => format!("char {}", var),
             Type::Integer => format!("int {}", var),
             Type::Real => format!("float {}", var),
             Type::String => format!("char *{}", var),
-            Type::Array(ref t, -1) => t.to_c(format!("*{}", var)),
-            Type::Array(ref t, i) => t.to_c(format!("{}[{}]", var, i)),
+            Type::Array(ref t, -1) => t.to_c(&format!("*{}", var)),
+            Type::Array(ref t, i) => t.to_c(&format!("{}[{}]", var, i)),
             Type::Void => format!("void {}", var),
             Type::Error => format!("unknown {}", var)
+        }
+    }
+}
+
+impl Parameter {
+    fn to_c(&self) -> String {
+        if self.is_ref {
+            self.vtype.to_c(&format!("*{}", self.name))
+        } else {
+            self.vtype.to_c(&self.name)
         }
     }
 }
@@ -896,31 +906,54 @@ impl UnaryOperator {
 
 struct CodeGenerator {
     indent: usize,
-    var_counter: i8
+    var_counter: i8,
+    output: String,
+    queue: Vec<(String, Definition)>
 }
 
 impl CodeGenerator {
     fn new() -> CodeGenerator {
         CodeGenerator {
             indent: 0,
-            var_counter: 0
+            var_counter: 0,
+            output: String::new(),
+            queue: Vec::new()
         }
     }
+    
     fn new_var(&mut self) -> String {
         self.var_counter += 1;
         format!("tmp{}", self.var_counter)
     }
-    fn generate(&self, code: String) {
-        println!("{}{}", " ".repeat(self.indent), code);
+    
+    fn generate(&mut self, code: String) {
+        self.output = format!("{}{}{}\n", self.output, " ".repeat(self.indent), code);
     }
     
-    fn generate_str(&self, code: &str) {
+    fn generate_str(&mut self, code: &str) {
         self.generate(String::from(code));
+    }
+    
+    fn generate_def(&mut self, name: String, def: Definition) {
+        
     }
 
     fn generate_stmt(&mut self, stmt: &Statement) {
         match *stmt {
-            Statement::Block(stmts) => {
+            Statement::Definition(Definition::Variable(ref par)) => {
+                self.generate(format!("{};", par.to_c()));
+            }
+            Statement::Definition(ref f) /* f on Definition::Function */ => {
+                let tmp = self.new_var();
+                if let &Definition::Function(ref name, ref params, ref rtype, _) = f {
+                    let paramcodes: Vec<_> = params.iter().map(|p| p.to_c()).collect();
+                    self.generate(format!("{} = {};", rtype.to_c(&format!("(*{})({})", name, paramcodes.join(", "))), tmp));
+                } else {
+                    assert!(false);
+                }
+                self.queue.push((tmp, f.clone()));
+            }
+            Statement::Block(ref stmts) => {
                 self.generate_str("{");
                 self.indent += 1;
                 for stmt in stmts {
@@ -929,11 +962,11 @@ impl CodeGenerator {
                 self.indent -= 1;
                 self.generate_str("}");
             }
-            Statement::Expression(expr) => {
-                self.generate_expr(&expr);
+            Statement::Expression(ref expr) => {
+                self.generate_expr(expr);
             }
-            Statement::Return(expr) => {
-                let var = self.generate_expr(&expr);
+            Statement::Return(ref expr) => {
+                let var = self.generate_expr(expr);
                 self.generate(format!("return {};", var));
             }
             Statement::SimpleReturn => {
@@ -965,6 +998,7 @@ impl CodeGenerator {
     }
     
     fn generate_expr(&mut self, expr: &ExpressionBox) -> String {
+        let etype = expr.etype.clone().unwrap();
         match *expr.expr {
             Expression::Integer(ref i) => i.to_string(),
             Expression::Real(ref i) => i.to_string(),
@@ -973,14 +1007,14 @@ impl CodeGenerator {
                 let op = op.to_c();
                 let acode = self.generate_expr(a);
                 let bcode = self.generate_expr(b);
-                self.generate(format!("{} = ({}) {} ({});", expr.etype.unwrap().to_c(tmp), acode, op, bcode));
+                self.generate(format!("{} = ({}) {} ({});", etype.to_c(&tmp), acode, op, bcode));
                 tmp
             }
             Expression::UnOperator(ref op, ref a) => {
                 let tmp = self.new_var();
                 let op = op.to_c();
                 let acode = self.generate_expr(a);
-                self.generate(format!("{} = {}({});", expr.etype.unwrap().to_c(tmp), op, acode));
+                self.generate(format!("{} = {}({});", etype.to_c(&tmp), op, acode));
                 tmp
             }
             Expression::Variable(ref name, ref is_ref) => {
@@ -995,12 +1029,12 @@ impl CodeGenerator {
                 format!("{}[{}]", name, icode)
             }
             Expression::Call(ref name, ref args) => {
-                let argcodes = Vec::new();
+                let mut argcodes = Vec::new();
                 for arg in args {
                     argcodes.push(self.generate_expr(arg));
                 }
                 let tmp = self.new_var();
-                self.generate(format!("{} = {}({});", expr.etype.unwrap().to_c(tmp), name, argcodes.join(", ")));
+                self.generate(format!("{} = {}({});", etype.to_c(&tmp), name, argcodes.join(", ")));
                 tmp
             }
             Expression::Assign(ref lval, ref rval) => {
