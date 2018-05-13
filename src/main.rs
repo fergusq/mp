@@ -12,6 +12,10 @@ fn main() {
     println!("{:?}", tree);
     analyse_block(tree, &mut Nametable::new(Type::Void));
     println!("{:?}", tree);
+    let cg = CodeGenerator::new();
+    for stmt in tree {
+        cg.generate_stmt(stmt);
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -840,16 +844,74 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
 // CODE GENERATION ///////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 
+impl Type {
+    fn to_c(&self, var: String) -> String {
+        match *self {
+            Type::Boolean => format!("char {}", var),
+            Type::Integer => format!("int {}", var),
+            Type::Real => format!("float {}", var),
+            Type::String => format!("char *{}", var),
+            Type::Array(ref t, -1) => t.to_c(format!("*{}", var)),
+            Type::Array(ref t, i) => t.to_c(format!("{}[{}]", var, i)),
+            Type::Void => format!("void {}", var),
+            Type::Error => format!("unknown {}", var)
+        }
+    }
+}
+
+impl BinaryOperator {
+    fn to_c(&self) -> String {
+        String::from(
+            match *self {
+                BinaryOperator::Eq => "==",
+                BinaryOperator::Neq => "!=",
+                BinaryOperator::Lt => "<",
+                BinaryOperator::Leq => "<=",
+                BinaryOperator::Gt => ">",
+                BinaryOperator::Geq => ">=",
+                BinaryOperator::Add => "+",
+                BinaryOperator::Sub => "-",
+                BinaryOperator::Mul => "*",
+                BinaryOperator::Div => "/",
+                BinaryOperator::Mod => "%",
+                BinaryOperator::And => "&&",
+                BinaryOperator::Or => "||"
+            }
+        )
+    }
+}
+
+impl UnaryOperator {
+    fn to_c(&self) -> String {
+        String::from(
+            match *self {
+                UnaryOperator::Plus => "+",
+                UnaryOperator::Minus => "-",
+                UnaryOperator::Not => "!",
+                UnaryOperator::Size => "array_len"
+            }
+        )
+    }
+}
+
 struct CodeGenerator {
-    indent: i8
+    indent: usize,
+    var_counter: i8
 }
 
 impl CodeGenerator {
-    fn generate(&self, code: String) {
-        for _ in [0..self.indent] {
-            print!(" ");
+    fn new() -> CodeGenerator {
+        CodeGenerator {
+            indent: 0,
+            var_counter: 0
         }
-        println!(code);
+    }
+    fn new_var(&mut self) -> String {
+        self.var_counter += 1;
+        format!("tmp{}", self.var_counter)
+    }
+    fn generate(&self, code: String) {
+        println!("{}{}", " ".repeat(self.indent), code);
     }
     
     fn generate_str(&self, code: &str) {
@@ -862,22 +924,91 @@ impl CodeGenerator {
                 self.generate_str("{");
                 self.indent += 1;
                 for stmt in stmts {
-                    self.generate_stmt(stmts);
+                    self.generate_stmt(&stmt);
                 }
                 self.indent -= 1;
                 self.generate_str("}");
             }
             Statement::Expression(expr) => {
-                self.generate_expr(expr);
+                self.generate_expr(&expr);
             }
             Statement::Return(expr) => {
-                let var = self.generate_expr(expr);
+                let var = self.generate_expr(&expr);
                 self.generate(format!("return {};", var));
             }
+            Statement::SimpleReturn => {
+                self.generate_str("return;");
+            }
+            Statement::IfElse(ref cond, ref then, ref otherwise) => {
+                let otherwise_label = self.new_var();
+                let out_label = self.new_var();
+                let condcode = self.generate_expr(cond);
+                self.generate(format!("if (!{}) goto {};", condcode, otherwise_label));
+                self.generate_stmt(then);
+                self.generate(format!("goto {};", out_label));
+                self.generate(format!("{}:", otherwise_label));
+                self.generate_stmt(otherwise);
+                self.generate(format!("{}:", out_label));
+            }
+            Statement::While(ref cond, ref body) => {
+                let start_label = self.new_var();
+                let out_label = self.new_var();
+                self.generate(format!("{}:", start_label));
+                let condcode = self.generate_expr(cond);
+                self.generate(format!("if (!{}) goto {};", condcode, out_label));
+                self.generate_stmt(body);
+                self.generate(format!("goto {};", start_label));
+                self.generate(format!("{}:", out_label));
+            }
+            Statement::Nop => self.generate_str("/* nop */")
         }
     }
     
-    fn generate_expr(&mut self, expr: &ExpressionBox) {
-    
+    fn generate_expr(&mut self, expr: &ExpressionBox) -> String {
+        match *expr.expr {
+            Expression::Integer(ref i) => i.to_string(),
+            Expression::Real(ref i) => i.to_string(),
+            Expression::BiOperator(ref op, ref a, ref b) => {
+                let tmp = self.new_var();
+                let op = op.to_c();
+                let acode = self.generate_expr(a);
+                let bcode = self.generate_expr(b);
+                self.generate(format!("{} = ({}) {} ({});", expr.etype.unwrap().to_c(tmp), acode, op, bcode));
+                tmp
+            }
+            Expression::UnOperator(ref op, ref a) => {
+                let tmp = self.new_var();
+                let op = op.to_c();
+                let acode = self.generate_expr(a);
+                self.generate(format!("{} = {}({});", expr.etype.unwrap().to_c(tmp), op, acode));
+                tmp
+            }
+            Expression::Variable(ref name, ref is_ref) => {
+                if **is_ref {
+                    format!("*{}", name)
+                } else {
+                    format!("{}", name)
+                }
+            }
+            Expression::Index(ref name, ref index) => {
+                let icode = self.generate_expr(index);
+                format!("{}[{}]", name, icode)
+            }
+            Expression::Call(ref name, ref args) => {
+                let argcodes = Vec::new();
+                for arg in args {
+                    argcodes.push(self.generate_expr(arg));
+                }
+                let tmp = self.new_var();
+                self.generate(format!("{} = {}({});", expr.etype.unwrap().to_c(tmp), name, argcodes.join(", ")));
+                tmp
+            }
+            Expression::Assign(ref lval, ref rval) => {
+                let lvalcode = self.generate_expr(lval);
+                let rvalcode = self.generate_expr(rval);
+                self.generate(format!("{} = {};", lvalcode, rvalcode));
+                lvalcode
+            }
+        }
     }
 }
