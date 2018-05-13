@@ -9,15 +9,21 @@ fn main() {
     let code = "
     program kissa;
     var i : integer;
+    i := 10;
     function f(i : integer) : integer;
     begin
       return i+1
+    end;
+    procedure g(var x : integer);
+    begin
+      x := x + i;
     end;
     
     begin
       var j : integer;
       j := 0;
       j := f(j);
+      g(j);
     end.";
     let tokens = &mut lex(code);
     let mut tree = parse_program(tokens);
@@ -315,12 +321,13 @@ enum Statement {
 #[derive(Debug)]
 struct ExpressionBox {
     expr: Box<Expression>,
-    etype: Option<Type>
+    etype: Option<Type>,
+    make_ref: bool
 }
 
 impl ExpressionBox {
     fn new(expr: Expression) -> ExpressionBox {
-        ExpressionBox { expr: Box::new(expr), etype: None } 
+        ExpressionBox { expr: Box::new(expr), etype: None, make_ref: false } 
     }
 }
 
@@ -377,9 +384,13 @@ fn parse_type(tokens: &mut TokenList) -> Type {
         "real" => Type::Real,
         "string" => Type::String,
         "array" => {
-            tokens.accept("[");
-            let size = tokens.accept_integer();
-            tokens.accept("]");
+            let size = if tokens.try_accept("[") {
+                let size = tokens.accept_integer();
+                tokens.accept("]");
+                size
+            } else {
+                -1
+            };
             tokens.accept("of");
             let subtype = parse_type(tokens);
             Type::Array(Box::new(subtype), size)
@@ -758,16 +769,20 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 panic!("Type mismatch");
             }
         }
+        &mut Expression::Variable(ref name, ref mut reference) => {
+            if let &Definition::Variable(Parameter { is_ref: ref it, .. }) = nt.find_definition(&name) {
+                **reference = *it;
+            }
+        }
         &mut Expression::Assign(ref mut var, ref mut val) => {
             analyse_expr(var, nt);
             analyse_expr(val, nt);
             match &mut *var.expr {
-                &mut Expression::Variable(ref name, ref mut reference) => {
-                    if let &Definition::Variable(Parameter { vtype: ref t, is_ref: ref it, .. }) = nt.find_definition(&name) {
+                &mut Expression::Variable(ref name, _) => {
+                    if let &Definition::Variable(Parameter { vtype: ref t, .. }) = nt.find_definition(&name) {
                         if !check_types(&val.etype.clone().unwrap(), &t) {
                             panic!("Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype.clone().unwrap())
                         }
-                        **reference = *it;
                     }
                     else {
                         panic!("Left side of assignment is not lval");
@@ -795,9 +810,19 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 analyse_expr(arg, nt);
             }
             if let &Definition::Function(_, ref params, _, _) = nt.find_definition(&name) {
-                for (ref arg, ref param) in args.iter().zip(params.iter()) {
+                for (ref mut arg, ref param) in args.iter_mut().zip(params.iter()) {
                     if !check_types(&arg.etype.clone().unwrap(), &param.vtype) {
                         panic!("Type mismatch: wrong argument type: expected {}, got {}", param.vtype, arg.etype.clone().unwrap())
+                    }
+                    if param.is_ref {
+                         match &mut *arg.expr {
+                             &mut Expression::Variable(_, _) => {}
+                             &mut Expression::Index(_, _) => {}
+                             _ => {
+                                 panic!("Argument corresponding to a var parameter must be either a variable or an array subscript");
+                             }
+                         }
+                         arg.make_ref = true;
                     }
                 }
             
@@ -1038,6 +1063,7 @@ impl CodeGenerator {
     
     fn generate_expr(&mut self, expr: &ExpressionBox) -> String {
         let etype = expr.etype.clone().unwrap();
+        let make_ref = expr.make_ref;
         match *expr.expr {
             Expression::Integer(ref i) => i.to_string(),
             Expression::Real(ref i) => i.to_string(),
@@ -1057,10 +1083,18 @@ impl CodeGenerator {
                 tmp
             }
             Expression::Variable(ref name, ref is_ref) => {
-                if **is_ref {
-                    format!("*{}", name)
+                if make_ref {
+                    if **is_ref {
+                        format!("{}", name)
+                    } else {
+                        format!("&{}", name)
+                    }
                 } else {
-                    format!("{}", name)
+                    if **is_ref {
+                        format!("*{}", name)
+                    } else {
+                        format!("{}", name)
+                    }
                 }
             }
             Expression::Index(ref name, ref index) => {
