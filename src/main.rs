@@ -6,16 +6,36 @@ use std::cell::RefCell;
 use std::fmt;
 
 fn main() {
-    let tokens = &mut lex("program kissa; var i : integer; function f(i : integer) : integer ; begin return i+1 end; begin var j : integer; end.");
-    let tree = &mut parse_program(tokens);
+    let tokens = &mut lex("
+    program kissa;
+    var i : integer;
+    function f(i : integer) : integer ;
+    begin
+      return i+1
+    end;
+    
+    begin
+      var j : integer;
+      j := 0;
+      j := f(j);
+    end.");
+    let mut tree = parse_program(tokens);
     println!("{:?}", tokens);
     println!("{:?}", tree);
-    analyse_block(tree, &mut Nametable::new(Type::Void));
+    analyse_stmt(&mut tree, &mut Nametable::new(Type::Void));
     println!("{:?}", tree);
     let mut cg = CodeGenerator::new();
-    for stmt in tree {
-        cg.generate_stmt(stmt);
+    cg.queue.push((String::from("main"), Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree)))));
+    while !cg.queue.is_empty() {
+        let queue = cg.queue.clone();
+        cg.queue.clear();
+        for (name, def) in queue {
+            cg.generate_def(name, def);
+        }
     }
+    println!("== OUTPUT ==");
+    println!("{}", cg.header);
+    println!("{}", cg.output);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -132,7 +152,7 @@ fn is_valid_identifier_char(chr: char) -> bool {
 }
 
 fn is_valid_operator_char(chr: char) -> bool {
-    return ['<', '>', '='].contains(&chr);
+    return ['<', '>', '=', ':'].contains(&chr);
 }
 
 fn lex(code: &str) -> TokenList {
@@ -327,13 +347,13 @@ enum UnaryOperator {
     Plus, Minus, Not, Size
 }
 
-fn parse_program(tokens: &mut TokenList) -> Vec<Statement> {
+fn parse_program(tokens: &mut TokenList) -> Statement {
     tokens.accept("program");
     let _id = tokens.accept_identifier();
     tokens.accept(";");
     let block = parse_block(tokens);
     tokens.accept(".");
-    return block;
+    return Statement::Block(block);
 }
 
 fn parse_block(tokens: &mut TokenList) -> Vec<Statement> {
@@ -564,6 +584,7 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                                 args.push(parse_expression(tokens));
                             }
                         }
+                        tokens.accept(")");
                         ExpressionBox::new(Expression::Call(word, args))
                     },
                     "[" => {
@@ -666,7 +687,9 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
                         &Definition::Function(_, _, _, _) => def.clone(),
                         &Definition::Variable(ref par) => {
                             let new_par = Parameter::new(par.name.clone(), par.vtype.clone(), true);
-                            nonlocals.push(new_par.clone());
+                            if !params.iter().any(|ref p| p.name == par.name) { /* lisätään muuttuja vain jos parametri ei varjosta sitä */
+                                nonlocals.push(new_par.clone());
+                            }
                             Definition::Variable(new_par.clone())
                         }
                     };
@@ -774,17 +797,14 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                         panic!("Type mismatch: wrong argument type: expected {}, got {}", param.vtype, arg.etype.clone().unwrap())
                     }
                 }
-            }
             
-            // lisätään nonlokaalit argumenteiksi
-            for map in &nt.stack {
-                for (name, def) in map {
-                    match def {
-                        &Definition::Variable(ref par) => {
-                            args.push(ExpressionBox::new(Expression::Variable(par.name.clone(), Box::new(true))));
-                        }
-                        _ => {}
-                    };
+                // lisätään nonlokaalit argumenteiksi
+                for map in &nt.stack {
+                    for i in 0..params.len()-args.len() {
+                        let mut new_arg = ExpressionBox::new(Expression::Variable(params[i].name.clone(), Box::new(true)));
+                        new_arg.etype = Some(params[i].vtype.clone());
+                        args.push(new_arg);
+                    }
                 }
             }
         }
@@ -908,6 +928,7 @@ struct CodeGenerator {
     indent: usize,
     var_counter: i8,
     output: String,
+    header: String,
     queue: Vec<(String, Definition)>
 }
 
@@ -917,6 +938,7 @@ impl CodeGenerator {
             indent: 0,
             var_counter: 0,
             output: String::new(),
+            header: String::new(),
             queue: Vec::new()
         }
     }
@@ -930,12 +952,28 @@ impl CodeGenerator {
         self.output = format!("{}{}{}\n", self.output, " ".repeat(self.indent), code);
     }
     
+    fn generate_header(&mut self, code: String) {
+        self.header = format!("{}{}{}\n", self.header, " ".repeat(self.indent), code);
+    }
+    
     fn generate_str(&mut self, code: &str) {
         self.generate(String::from(code));
     }
     
     fn generate_def(&mut self, name: String, def: Definition) {
-        
+        if let Definition::Function(_, ref params, ref rtype, ref body) = def {
+            let paramcodes: Vec<_> = params.iter().map(|p| p.to_c()).collect();
+            let signature = format!("{}", rtype.to_c(&format!("{}({})", name, paramcodes.join(", "))));
+            self.generate_header(format!("{};", signature));
+            self.generate(format!("{} {{", signature));
+            self.indent += 1;
+            self.generate_stmt(&*body.borrow_mut());
+            self.indent -= 1;
+            self.generate_str("}");
+        }
+        else {
+            assert!(false);
+        }
     }
 
     fn generate_stmt(&mut self, stmt: &Statement) {
