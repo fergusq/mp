@@ -35,7 +35,7 @@ fn main() {
     //println!("{:?}", tokens);
     //println!("{:?}", tree);
     analyse_stmt(&mut tree, &mut Nametable::new(Type::Void));
-    println!("{:?}", tree);
+    //println!("{:?}", tree);
     let mut cg = CodeGenerator::new();
     cg.queue.push((String::from("main"), Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree)))));
     while !cg.queue.is_empty() {
@@ -328,13 +328,13 @@ enum Statement {
 #[derive(Debug)]
 struct ExpressionBox {
     expr: Box<Expression>,
-    etype: Option<Type>,
+    etype: Type,
     make_ref: bool
 }
 
 impl ExpressionBox {
     fn new(expr: Expression) -> ExpressionBox {
-        ExpressionBox { expr: Box::new(expr), etype: None, make_ref: false } 
+        ExpressionBox { expr: Box::new(expr), etype: Type::Error, make_ref: false } 
     }
 }
 
@@ -659,15 +659,16 @@ impl Nametable {
     fn peek(&mut self) -> &mut HashMap<String, Definition> {
         self.stack.last_mut().unwrap()
     }
-    fn find_definition(&self, name: &String) -> &Definition {
+    fn find_definition(&self, name: &String) -> Option<&Definition> {
         let mut i = self.stack.len();
         while i > 0 {
             if let Some(def) = self.stack[i-1].get(name) {
-                return def;
+                return Some(def);
             }
             i -= 1;
         }
-        panic!("symbol not found: {}", name);
+        eprintln!("symbol not found: {}", name);
+        None
     }
 }
 
@@ -745,23 +746,26 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
         }
         &mut Statement::Return(ref mut expr) => {
             analyse_expr(expr, &nt);
-            if !check_types(&expr.etype.clone().unwrap(), &nt.return_type) {
-                panic!("Type mismatch: incorrect return type: expected {}, got {}", nt.return_type, expr.etype.clone().unwrap());
+            if !check_types(&expr.etype, &nt.return_type) {
+                eprintln!("Type mismatch: incorrect return type: expected {}, got {}", nt.return_type, expr.etype);
+                return;
             }
         }
         &mut Statement::SimpleReturn => {}
         &mut Statement::IfElse(ref mut cond, ref mut then, ref mut otherwise) => {
             analyse_expr(cond, nt);
-            if !check_types(&cond.etype.clone().unwrap(), &Type::Boolean) {
-                panic!("Type mismatch: if condition must be boolean: expected boolean, got {}", cond.etype.clone().unwrap());
+            if !check_types(&cond.etype, &Type::Boolean) {
+                eprintln!("Type mismatch: if condition must be boolean: expected boolean, got {}", cond.etype);
+                return;
             }
             analyse_stmt(then, nt);
             analyse_stmt(otherwise, nt);
         }
         &mut Statement::While(ref mut cond, ref mut body) => {
             analyse_expr(cond, nt);
-            if !check_types(&cond.etype.clone().unwrap(), &Type::Boolean) {
-                panic!("Type mismatch: while condition must be boolean");
+            if !check_types(&cond.etype, &Type::Boolean) {
+                eprintln!("Type mismatch: while condition must be boolean");
+                return;
             }
             analyse_stmt(body, nt);
         }
@@ -774,19 +778,21 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
         &mut Expression::BiOperator(_, ref mut a, ref mut b) => {
             analyse_expr(a, nt);
             analyse_expr(b, nt);
-            if !check_types(&a.etype.clone().unwrap(), &b.etype.clone().unwrap()) {
-                panic!("Type mismatch");
+            if !check_types(&a.etype, &b.etype) {
+                eprintln!("Type mismatch: {} and {} are not compatible", a.etype, b.etype);
+                return;
             }
         }
         &mut Expression::UnOperator(UnaryOperator::Plus, ref mut a) => {
             analyse_expr(a, nt);
-            if !check_types(&a.etype.clone().unwrap(), &Type::Integer)
-                || !check_types(&a.etype.clone().unwrap(), &Type::Real) {
-                panic!("Type mismatch");
+            if !check_types(&a.etype, &Type::Integer)
+                || !check_types(&a.etype, &Type::Real) {
+                eprintln!("Type mismatch: expected integer or real, got {}", a.etype);
+                return;
             }
         }
         &mut Expression::Variable(ref name, ref mut reference) => {
-            if let &Definition::Variable(Parameter { is_ref: ref it, .. }) = nt.find_definition(&name) {
+            if let Some(&Definition::Variable(Parameter { is_ref: ref it, .. })) = nt.find_definition(&name) {
                 **reference = *it;
             }
         }
@@ -795,30 +801,38 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             analyse_expr(val, nt);
             match &mut *var.expr {
                 &mut Expression::Variable(ref name, _) => {
-                    if let &Definition::Variable(Parameter { vtype: ref t, .. }) = nt.find_definition(&name) {
-                        if !check_types(&val.etype.clone().unwrap(), &t) {
-                            panic!("Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype.clone().unwrap())
+                    if let Some(&Definition::Variable(Parameter { vtype: ref t, .. })) = nt.find_definition(&name) {
+                        if !check_types(&val.etype, &t) {
+                            eprintln!("Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype);
+                            return;
                         }
                     }
                     else {
-                        panic!("Left side of assignment is not lval");
+                        eprintln!("Left side of assignment is not lval");
+                        return;
                     }
                 }
                 &mut Expression::Index(ref name, ref mut index) => {
                     analyse_expr(index, nt);
-                    if !check_types(&index.etype.clone().unwrap(), &Type::Integer) {
-                        panic!("Type mismatch: index must be integer")
+                    if !check_types(&index.etype, &Type::Integer) {
+                        eprintln!("Type mismatch: index must be integer");
+                        return;
                     }
-                    if let &Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. }) = nt.find_definition(&name) {
-                        if !check_types(&val.etype.clone().unwrap(), &t) {
-                            panic!("Type mismatch: expected {}, got {}", t, val.etype.clone().unwrap())
+                    if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {
+                        if !check_types(&val.etype, &t) {
+                            eprintln!("Type mismatch: expected {}, got {}", t, val.etype);
+                            return;
                         }
                     }
                     else {
-                        panic!("Type mismatch: expected array");
+                        eprintln!("Type mismatch: expected array");
+                        return;
                     }
                 }
-                _ => panic!("Left side of assignment is not lval")
+                _ => {
+                    eprintln!("Left side of assignment is not lval");
+                    return;
+                }
             }
         }
         &mut Expression::Call(ref name, ref mut args) => {
@@ -835,23 +849,27 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             }
             else if name == "assert" {
                 if args.len() != 1 {
-                    panic!("Wrong number of arguments given for assert");
+                    eprintln!("Wrong number of arguments given for assert");
+                    return;
                 }
-                if !check_types(&args[0].etype.clone().unwrap(), &Type::Boolean) {
-                    panic!("Type mismatch: wrong argument type for param condition: expected boolean, got {}", args[0].etype.clone().unwrap());
+                if !check_types(&args[0].etype, &Type::Boolean) {
+                    eprintln!("Type mismatch: wrong argument type for param condition: expected boolean, got {}", args[0].etype);
+                    return;
                 }
             }
-            else if let &Definition::Function(_, ref params, _, _) = nt.find_definition(&name) {
+            else if let Some(&Definition::Function(_, ref params, _, _)) = nt.find_definition(&name) {
                 for (ref mut arg, ref param) in args.iter_mut().zip(params.iter()) {
-                    if !check_types(&arg.etype.clone().unwrap(), &param.vtype) {
-                        panic!("Type mismatch: wrong argument type for param {}: expected {}, got {}", param.name, param.vtype, arg.etype.clone().unwrap())
+                    if !check_types(&arg.etype, &param.vtype) {
+                        eprintln!("Type mismatch: wrong argument type for param {}: expected {}, got {}", param.name, param.vtype, arg.etype);
+                        return;
                     }
                     if param.is_ref {
                          match &mut *arg.expr {
                              &mut Expression::Variable(_, _) => {}
                              &mut Expression::Index(_, _) => {}
                              _ => {
-                                 panic!("Argument corresponding to a var parameter must be either a variable or an array subscript");
+                                 eprintln!("Argument corresponding to a var parameter must be either a variable or an array subscript");
+                                 return;
                              }
                          }
                          arg.make_ref = true;
@@ -860,33 +878,34 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             
                 // lisätään nonlokaalit argumenteiksi
                 for i in args.len()..params.len() {
-                    if let &Definition::Variable(ref par) = nt.find_definition(&params[i].name) {
+                    if let Some(&Definition::Variable(ref par)) = nt.find_definition(&params[i].name) {
                         let mut new_arg = ExpressionBox::new(Expression::Variable(params[i].name.clone(), Box::new(par.is_ref)));
-                        new_arg.etype = Some(params[i].vtype.clone());
+                        new_arg.etype = params[i].vtype.clone();
                         new_arg.make_ref = true;
                         args.push(new_arg);
                     } else {
-                        panic!("Wrong number of arguments given for {}", name);
+                        eprintln!("Wrong number of arguments given for {}", name);
+                        return;
                     }
                 }
             }
         }
         _ => {}
     }
-    expr.etype = Option::Some(predict_type(expr, nt));
+    expr.etype = predict_type(expr, nt);
 }
 
 fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
     match *expr.expr {
         Expression::Integer(_) => Type::Integer,
         Expression::Real(_) => Type::Real,
-        Expression::BiOperator(BinaryOperator::Add, ref a, _) => a.etype.clone().unwrap(),
-        Expression::BiOperator(BinaryOperator::Sub, ref a, _) => a.etype.clone().unwrap(),
-        Expression::BiOperator(BinaryOperator::Mul, ref a, _) => a.etype.clone().unwrap(),
-        Expression::BiOperator(BinaryOperator::Div, ref a, _) => a.etype.clone().unwrap(),
-        Expression::BiOperator(BinaryOperator::Mod, ref a, _) => a.etype.clone().unwrap(),
-        Expression::UnOperator(UnaryOperator::Plus, ref a) => a.etype.clone().unwrap(),
-        Expression::UnOperator(UnaryOperator::Minus, ref a) => a.etype.clone().unwrap(),
+        Expression::BiOperator(BinaryOperator::Add, ref a, _) => a.etype.clone(),
+        Expression::BiOperator(BinaryOperator::Sub, ref a, _) => a.etype.clone(),
+        Expression::BiOperator(BinaryOperator::Mul, ref a, _) => a.etype.clone(),
+        Expression::BiOperator(BinaryOperator::Div, ref a, _) => a.etype.clone(),
+        Expression::BiOperator(BinaryOperator::Mod, ref a, _) => a.etype.clone(),
+        Expression::UnOperator(UnaryOperator::Plus, ref a) => a.etype.clone(),
+        Expression::UnOperator(UnaryOperator::Minus, ref a) => a.etype.clone(),
         Expression::UnOperator(UnaryOperator::Size, _) => Type::Integer,
         Expression::BiOperator(BinaryOperator::Lt, _, _) => Type::Boolean,
         Expression::BiOperator(BinaryOperator::Gt, _, _) => Type::Boolean,
@@ -898,30 +917,33 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
         Expression::BiOperator(BinaryOperator::Or, _, _) => Type::Boolean,
         Expression::UnOperator(UnaryOperator::Not, _) => Type::Boolean,
         Expression::Variable(ref name, _) => {
-            if let &Definition::Variable(Parameter { vtype: ref t, .. }) = nt.find_definition(&name) {
+            if let Some(&Definition::Variable(Parameter { vtype: ref t, .. })) = nt.find_definition(&name) {
                 t.clone()
             } else {
-                panic!("not a variable: {}", name)
+                eprintln!("not a variable: {}", name);
+                Type::Error
             }
         },
         Expression::Index(ref name, _) => {
-            if let &Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. }) = nt.find_definition(&name) {
+            if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {
                 (**t).clone()
             } else {
-                panic!("not an array: {}", name)
+                eprintln!("not an array: {}", name);
+                Type::Error
             }
         },
         Expression::Call(ref name, _) => {
             if ["writeln", "read", "assert"].contains(&name.as_str()) {
                 Type::Void
             }
-            else if let &Definition::Function(_, _, ref t, _) = nt.find_definition(name) {
+            else if let Some(&Definition::Function(_, _, ref t, _)) = nt.find_definition(name) {
                 t.clone()
             } else {
-                panic!("not a function: {}", name)
+                eprintln!("not a function: {}", name);
+                Type::Error
             }
         },
-        Expression::Assign(_, ref rexpr) => rexpr.etype.clone().unwrap(),
+        Expression::Assign(_, ref rexpr) => rexpr.etype.clone(),
         _ => Type::Void
     }
 }
@@ -1102,7 +1124,7 @@ impl CodeGenerator {
     }
     
     fn generate_expr(&mut self, expr: &ExpressionBox) -> String {
-        let etype = expr.etype.clone().unwrap();
+        let etype = expr.etype.clone();
         let make_ref = expr.make_ref;
         match *expr.expr {
             Expression::Integer(ref i) => i.to_string(),
@@ -1146,13 +1168,13 @@ impl CodeGenerator {
                     for arg in args {
                         let argcode = self.generate_expr(arg);
                         match arg.etype {
-                            Some(Type::Integer) => {
+                            Type::Integer => {
                                 self.generate(format!("scanf(\"%d\", {});", argcode));
                             }
-                            Some(Type::Real) => {
+                            Type::Real => {
                                 self.generate(format!("scanf(\"%f\", {});", argcode));
                             }
-                            Some(Type::String) => {
+                            Type::String => {
                                 self.generate(format!("gets_s({}, 256);", argcode));
                             }
                             _ => {}
@@ -1163,9 +1185,9 @@ impl CodeGenerator {
                     for arg in args {
                         let argcode = self.generate_expr(arg);
                         let mode = match arg.etype {
-                            Some(Type::Integer) => "%d",
-                            Some(Type::Real) => "%f",
-                            Some(Type::String) => "%s",
+                            Type::Integer => "%d",
+                            Type::Real => "%f",
+                            Type::String => "%s",
                             _ => ""
                         };
                         self.generate(format!("printf(\"{}\", {});", mode, argcode));
