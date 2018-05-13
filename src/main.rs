@@ -16,7 +16,11 @@ fn main() {
     end;
     procedure g(var x : integer);
     begin
-      x := x + i;
+      function h() : integer;
+      begin
+        return i*2;
+      end;
+      x := x + h();
     end;
     
     begin
@@ -30,7 +34,7 @@ fn main() {
     //println!("{:?}", tokens);
     //println!("{:?}", tree);
     analyse_stmt(&mut tree, &mut Nametable::new(Type::Void));
-    //println!("{:?}", tree);
+    println!("{:?}", tree);
     let mut cg = CodeGenerator::new();
     cg.queue.push((String::from("main"), Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree)))));
     while !cg.queue.is_empty() {
@@ -467,7 +471,7 @@ fn parse_parameter(tokens: &mut TokenList) -> Parameter {
     let name = tokens.accept_identifier();
     tokens.accept(":");
     let vtype = parse_type(tokens);
-    Parameter { name: name, vtype: vtype, is_ref: is_ref }
+    Parameter::new(name, vtype, is_ref)
 }
 
 fn parse_variable_def(tokens: &mut TokenList) -> Vec<Statement> {
@@ -675,10 +679,31 @@ fn check_types(a: &Type, b: &Type) -> bool {
 fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable) {
     nt.push();
     for stmt in &mut *block {
-        if let &mut Statement::Definition(ref def) = stmt {
-            let name = match *def {
-                Definition::Function(ref name, _, _, _) => name,
-                Definition::Variable(Parameter { name: ref name, .. }) => name
+        if let &mut Statement::Definition(ref mut def) = stmt {
+            let name = match def {
+                &mut Definition::Function(ref name, ref mut params, _, _) => {
+                    // etsitään nonlokaalit
+                    let mut nonlocals = Vec::new();
+                    for map in &nt.stack {
+                        for (name, def) in map {
+                            match def {
+                                &Definition::Variable(ref par) => {
+                                    let new_par = Parameter::new(par.name.clone(), par.vtype.clone(), true);
+                                    if !params.iter().any(|ref p| p.name == par.name) { /* lisätään muuttuja vain jos parametri ei varjosta sitä */
+                                        nonlocals.push(new_par.clone());
+                                    }
+                                }
+                                _ => {}
+                            };
+                        }
+                    }
+                    
+                    // lisätään nonlokaalit parametreihin
+                    params.extend(nonlocals);
+                    
+                    name
+                },
+                &mut Definition::Variable(Parameter { name: ref name, .. }) => name
             };
             nt.peek().insert(name.clone(), def.clone());
         }
@@ -691,32 +716,20 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable) {
 
 fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
     match stmt {
-        &mut Statement::Definition(Definition::Function(ref _name, ref mut params, ref return_type, ref mut body)) => {
+        &mut Statement::Definition(Definition::Function(ref _name, ref params, ref return_type, ref mut body)) => {
             let mut new_nt = Nametable::new(return_type.clone());
             new_nt.push();
-            let mut nonlocals = Vec::new();
             for map in &nt.stack {
                 for (name, def) in map {
-                    let new_def = match def {
-                        &Definition::Function(_, _, _, _) => def.clone(),
-                        &Definition::Variable(ref par) => {
-                            let new_par = Parameter::new(par.name.clone(), par.vtype.clone(), true);
-                            if !params.iter().any(|ref p| p.name == par.name) { /* lisätään muuttuja vain jos parametri ei varjosta sitä */
-                                nonlocals.push(new_par.clone());
-                            }
-                            Definition::Variable(new_par.clone())
-                        }
-                    };
-                    new_nt.peek().insert(name.clone(), new_def.clone());
+                    if let Definition::Function(_, _, _, _) = def.clone() {
+                        new_nt.peek().insert(name.clone(), def.clone());
+                    }
                 }
             }
             nt.push();
             for param in &*params {
                 new_nt.peek().insert(param.name.clone(), Definition::Variable(param.clone()));
             }
-            
-            // lisätään nonlokaalit parametreihin
-            params.extend(nonlocals);
             
             analyse_stmt(&mut *body.borrow_mut(), &mut new_nt);
         }
@@ -827,10 +840,13 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 }
             
                 // lisätään nonlokaalit argumenteiksi
-                for i in 0..params.len()-args.len() {
-                    let mut new_arg = ExpressionBox::new(Expression::Variable(params[i].name.clone(), Box::new(true)));
-                    new_arg.etype = Some(params[i].vtype.clone());
-                    args.push(new_arg);
+                for i in args.len()..params.len() {
+                    if let &Definition::Variable(ref par) = nt.find_definition(&params[i].name) {
+                        let mut new_arg = ExpressionBox::new(Expression::Variable(params[i].name.clone(), Box::new(par.is_ref)));
+                        new_arg.etype = Some(params[i].vtype.clone());
+                        new_arg.make_ref = true;
+                        args.push(new_arg);
+                    }
                 }
             }
         }
