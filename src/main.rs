@@ -6,10 +6,10 @@ use std::cell::RefCell;
 use std::fmt;
 
 fn main() {
-    let tokens = &mut lex("
+    let code = "
     program kissa;
     var i : integer;
-    function f(i : integer) : integer ;
+    function f(i : integer) : integer;
     begin
       return i+1
     end;
@@ -18,12 +18,13 @@ fn main() {
       var j : integer;
       j := 0;
       j := f(j);
-    end.");
+    end.";
+    let tokens = &mut lex(code);
     let mut tree = parse_program(tokens);
-    println!("{:?}", tokens);
-    println!("{:?}", tree);
+    //println!("{:?}", tokens);
+    //println!("{:?}", tree);
     analyse_stmt(&mut tree, &mut Nametable::new(Type::Void));
-    println!("{:?}", tree);
+    //println!("{:?}", tree);
     let mut cg = CodeGenerator::new();
     cg.queue.push((String::from("main"), Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree)))));
     while !cg.queue.is_empty() {
@@ -33,7 +34,7 @@ fn main() {
             cg.generate_def(name, def);
         }
     }
-    println!("== OUTPUT ==");
+    //println!("== OUTPUT ==");
     println!("{}", cg.header);
     println!("{}", cg.output);
 }
