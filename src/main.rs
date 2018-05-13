@@ -663,7 +663,7 @@ fn check_types(a: &Type, b: &Type) -> bool {
 
 fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable) {
     nt.push();
-    for stmt in block {
+    for stmt in &mut *block {
         if let &mut Statement::Definition(ref def) = stmt {
             let name = match *def {
                 Definition::Function(ref name, _, _, _) => name,
@@ -671,6 +671,8 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable) {
             };
             nt.peek().insert(name.clone(), def.clone());
         }
+    }
+    for stmt in block {
         analyse_stmt(stmt, nt);
     }
     nt.pop();
@@ -800,12 +802,10 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 }
             
                 // lisätään nonlokaalit argumenteiksi
-                for map in &nt.stack {
-                    for i in 0..params.len()-args.len() {
-                        let mut new_arg = ExpressionBox::new(Expression::Variable(params[i].name.clone(), Box::new(true)));
-                        new_arg.etype = Some(params[i].vtype.clone());
-                        args.push(new_arg);
-                    }
+                for i in 0..params.len()-args.len() {
+                    let mut new_arg = ExpressionBox::new(Expression::Variable(params[i].name.clone(), Box::new(true)));
+                    new_arg.etype = Some(params[i].vtype.clone());
+                    args.push(new_arg);
                 }
             }
         }
