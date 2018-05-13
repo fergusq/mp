@@ -1,3 +1,6 @@
+use std::io::Read;
+use std::fs::File;
+use std::env;
 use std::iter::Peekable;
 use std::str::Chars;
 use std::collections::HashMap;
@@ -6,31 +9,19 @@ use std::cell::RefCell;
 use std::fmt;
 
 fn main() {
-    let code = "
-    program kissa;
-    var i : integer;
-    i := 10;
-    function f(i : integer) : integer;
-    begin
-      return i+1
-    end;
-    procedure g(var x : integer);
-    begin
-      function h() : integer;
-      begin
-        return i*2;
-      end;
-      x := x + h();
-    end;
+    let args: Vec<_> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("usage: mp <file>");
+        return;
+    }
+
+    let filename = &args[1];
+
+    let mut file = File::open(filename).unwrap();
+    let mut code = String::new();
+    file.read_to_string(&mut code).unwrap();
     
-    begin
-      var j : integer;
-      read(j);
-      j := f(j);
-      g(j);
-      writeln(j);
-    end.";
-    let tokens = &mut lex(code);
+    let tokens = &mut lex(&code);
     let mut tree = parse_program(tokens);
     //println!("{:?}", tokens);
     //println!("{:?}", tree);
