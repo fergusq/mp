@@ -25,9 +25,10 @@ fn main() {
     
     begin
       var j : integer;
-      j := 0;
+      read(j);
       j := f(j);
       g(j);
+      writeln(j);
     end.";
     let tokens = &mut lex(code);
     let mut tree = parse_program(tokens);
@@ -45,6 +46,8 @@ fn main() {
         }
     }
     //println!("== OUTPUT ==");
+    println!("#include <stdio.h>");
+    println!("#include <assert.h>");
     println!("{}", cg.header);
     println!("{}", cg.output);
 }
@@ -822,10 +825,26 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             for arg in &mut *args {
                 analyse_expr(arg, nt);
             }
-            if let &Definition::Function(_, ref params, _, _) = nt.find_definition(&name) {
+            if name == "read" {
+                for arg in args {
+                    arg.make_ref = true;
+                }
+            }
+            else if name == "writeln" {
+                // ok
+            }
+            else if name == "assert" {
+                if args.len() != 1 {
+                    panic!("Wrong number of arguments given for assert");
+                }
+                if !check_types(&args[0].etype.clone().unwrap(), &Type::Boolean) {
+                    panic!("Type mismatch: wrong argument type for param condition: expected boolean, got {}", args[0].etype.clone().unwrap());
+                }
+            }
+            else if let &Definition::Function(_, ref params, _, _) = nt.find_definition(&name) {
                 for (ref mut arg, ref param) in args.iter_mut().zip(params.iter()) {
                     if !check_types(&arg.etype.clone().unwrap(), &param.vtype) {
-                        panic!("Type mismatch: wrong argument type: expected {}, got {}", param.vtype, arg.etype.clone().unwrap())
+                        panic!("Type mismatch: wrong argument type for param {}: expected {}, got {}", param.name, param.vtype, arg.etype.clone().unwrap())
                     }
                     if param.is_ref {
                          match &mut *arg.expr {
@@ -846,6 +865,8 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                         new_arg.etype = Some(params[i].vtype.clone());
                         new_arg.make_ref = true;
                         args.push(new_arg);
+                    } else {
+                        panic!("Wrong number of arguments given for {}", name);
                     }
                 }
             }
@@ -891,7 +912,10 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
             }
         },
         Expression::Call(ref name, _) => {
-            if let &Definition::Function(_, _, ref t, _) = nt.find_definition(name) {
+            if ["writeln", "read", "assert"].contains(&name.as_str()) {
+                Type::Void
+            }
+            else if let &Definition::Function(_, _, ref t, _) = nt.find_definition(name) {
                 t.clone()
             } else {
                 panic!("not a function: {}", name)
@@ -1118,13 +1142,44 @@ impl CodeGenerator {
                 format!("{}[{}]", name, icode)
             }
             Expression::Call(ref name, ref args) => {
-                let mut argcodes = Vec::new();
-                for arg in args {
-                    argcodes.push(self.generate_expr(arg));
+                if name == "read" {
+                    for arg in args {
+                        let argcode = self.generate_expr(arg);
+                        match arg.etype {
+                            Some(Type::Integer) => {
+                                self.generate(format!("scanf(\"%d\", {});", argcode));
+                            }
+                            Some(Type::Real) => {
+                                self.generate(format!("scanf(\"%f\", {});", argcode));
+                            }
+                            Some(Type::String) => {
+                                self.generate(format!("gets_s({}, 256);", argcode));
+                            }
+                            _ => {}
+                        }
+                    }
+                    String::from("0")
+                } else if name == "writeln" {
+                    for arg in args {
+                        let argcode = self.generate_expr(arg);
+                        let mode = match arg.etype {
+                            Some(Type::Integer) => "%d",
+                            Some(Type::Real) => "%f",
+                            Some(Type::String) => "%s",
+                            _ => ""
+                        };
+                        self.generate(format!("printf(\"{}\", {});", mode, argcode));
+                    }
+                    String::from("0")
+                } else {
+                    let mut argcodes = Vec::new();
+                    for arg in args {
+                        argcodes.push(self.generate_expr(arg));
+                    }
+                    let tmp = self.new_var();
+                    self.generate(format!("{} = {}({});", etype.to_c(&tmp), name, argcodes.join(", ")));
+                    tmp
                 }
-                let tmp = self.new_var();
-                self.generate(format!("{} = {}({});", etype.to_c(&tmp), name, argcodes.join(", ")));
-                tmp
             }
             Expression::Assign(ref lval, ref rval) => {
                 let lvalcode = self.generate_expr(lval);
