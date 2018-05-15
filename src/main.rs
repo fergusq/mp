@@ -27,7 +27,7 @@ fn main() {
     let mut tree = parse_program(tokens);
     //println!("{:?}", tokens);
     //println!("{:?}", tree);
-    analyse_stmt(&mut tree, &mut Nametable::new(Type::Void));
+    analyse_stmt(&mut tree, &mut Nametable::new(Type::Void), true);
     //println!("{:?}", tree);
     let mut cg = CodeGenerator::new();
     cg.queue.push((String::from("main"), Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree)))));
@@ -694,7 +694,7 @@ impl Nametable {
             }
             i -= 1;
         }
-        eprintln!("symbol not found: {}", name);
+        eprintln!("Semantic error: symbol not found: {}", name);
         None
     }
 }
@@ -715,12 +715,17 @@ fn check_types(a: &Type, b: &Type) -> bool {
     }
 }
 
-fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable) {
+fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
     nt.push();
+    let mut block_count = 0;
     for stmt in &mut *block {
         if let &mut Statement::Definition(ref mut def) = stmt {
             let name = match def {
                 &mut Definition::Function(ref name, ref mut params, _, _) => {
+                    if !is_top {
+                        eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: functions and procedures should be declared at the top level only");
+                    }
+                    
                     // etsitään nonlokaalit
                     let mut nonlocals = Vec::new();
                     for map in &nt.stack {
@@ -746,14 +751,29 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable) {
             };
             nt.peek().insert(name.clone(), def.clone());
         }
+        match stmt {
+            &mut Statement::Block(_) => block_count += 1,
+            _ => {}
+        }
     }
+    
+    if is_top {
+        if block_count != 1 {
+            eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: there should be one at only one block at the top level");
+        }
+        match block.last() {
+            Some(&Statement::Block(_)) => {}
+            _ => eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: there should be block at the end of the program")
+        }
+    }
+    
     for stmt in block {
-        analyse_stmt(stmt, nt);
+        analyse_stmt(stmt, nt, false);
     }
     nt.pop();
 }
 
-fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
+fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
     match stmt {
         &mut Statement::Definition(Definition::Function(ref _name, ref params, ref return_type, ref mut body)) => {
             let mut new_nt = Nametable::new(return_type.clone());
@@ -770,11 +790,11 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
                 new_nt.peek().insert(param.name.clone(), Definition::Variable(param.clone()));
             }
             
-            analyse_stmt(&mut *body.borrow_mut(), &mut new_nt);
+            analyse_stmt(&mut *body.borrow_mut(), &mut new_nt, false);
         }
         &mut Statement::Definition(Definition::Variable(_)) => {}
         &mut Statement::Block(ref mut stmts) => {
-            analyse_block(stmts, nt);
+            analyse_block(stmts, nt, is_top);
         }
         &mut Statement::Expression(ref mut expr) => {
             analyse_expr(expr, &nt);
@@ -782,7 +802,7 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
         &mut Statement::Return(ref mut expr) => {
             analyse_expr(expr, &nt);
             if !check_types(&expr.etype, &nt.return_type) {
-                eprintln!("Type mismatch: incorrect return type: expected {}, got {}", nt.return_type, expr.etype);
+                eprintln!("Semantic error: Type mismatch: incorrect return type: expected {}, got {}", nt.return_type, expr.etype);
                 return;
             }
         }
@@ -790,19 +810,19 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable) {
         &mut Statement::IfElse(ref mut cond, ref mut then, ref mut otherwise) => {
             analyse_expr(cond, nt);
             if !check_types(&cond.etype, &Type::Boolean) {
-                eprintln!("Type mismatch: if condition must be boolean: expected boolean, got {}", cond.etype);
+                eprintln!("Semantic error: Type mismatch: if condition must be boolean: expected boolean, got {}", cond.etype);
                 return;
             }
-            analyse_stmt(then, nt);
-            analyse_stmt(otherwise, nt);
+            analyse_stmt(then, nt, false);
+            analyse_stmt(otherwise, nt, false);
         }
         &mut Statement::While(ref mut cond, ref mut body) => {
             analyse_expr(cond, nt);
             if !check_types(&cond.etype, &Type::Boolean) {
-                eprintln!("Type mismatch: while condition must be boolean");
+                eprintln!("Semantic error: Type mismatch: while condition must be boolean");
                 return;
             }
-            analyse_stmt(body, nt);
+            analyse_stmt(body, nt, false);
         }
         &mut Statement::Nop => {}
     }
@@ -814,7 +834,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             analyse_expr(a, nt);
             analyse_expr(b, nt);
             if !check_types(&a.etype, &b.etype) {
-                eprintln!("Type mismatch: {} and {} are not compatible", a.etype, b.etype);
+                eprintln!("Semantic error: Type mismatch: {} and {} are not compatible", a.etype, b.etype);
                 return;
             }
         }
@@ -822,7 +842,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             analyse_expr(a, nt);
             if !check_types(&a.etype, &Type::Integer)
                 || !check_types(&a.etype, &Type::Real) {
-                eprintln!("Type mismatch: expected integer or real, got {}", a.etype);
+                eprintln!("Semantic error: Type mismatch: expected integer or real, got {}", a.etype);
                 return;
             }
         }
@@ -838,34 +858,34 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 &mut Expression::Variable(ref name, _) => {
                     if let Some(&Definition::Variable(Parameter { vtype: ref t, .. })) = nt.find_definition(&name) {
                         if !check_types(&val.etype, &t) {
-                            eprintln!("Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype);
+                            eprintln!("Semantic error: Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype);
                             return;
                         }
                     }
                     else {
-                        eprintln!("Left side of assignment is not lval");
+                        eprintln!("Semantic error: Left side of assignment is not lval");
                         return;
                     }
                 }
                 &mut Expression::Index(ref name, ref mut index) => {
                     analyse_expr(index, nt);
                     if !check_types(&index.etype, &Type::Integer) {
-                        eprintln!("Type mismatch: index must be integer");
+                        eprintln!("Semantic error: Type mismatch: index must be integer");
                         return;
                     }
                     if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {
                         if !check_types(&val.etype, &t) {
-                            eprintln!("Type mismatch: expected {}, got {}", t, val.etype);
+                            eprintln!("Semantic error: Type mismatch: expected {}, got {}", t, val.etype);
                             return;
                         }
                     }
                     else {
-                        eprintln!("Type mismatch: expected array");
+                        eprintln!("Semantic error: Type mismatch: expected array");
                         return;
                     }
                 }
                 _ => {
-                    eprintln!("Left side of assignment is not lval");
+                    eprintln!("Semantic error: Left side of assignment is not lval");
                     return;
                 }
             }
@@ -884,18 +904,18 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             }
             else if name == "assert" {
                 if args.len() != 1 {
-                    eprintln!("Wrong number of arguments given for assert");
+                    eprintln!("Semantic error: Wrong number of arguments given for assert");
                     return;
                 }
                 if !check_types(&args[0].etype, &Type::Boolean) {
-                    eprintln!("Type mismatch: wrong argument type for param condition: expected boolean, got {}", args[0].etype);
+                    eprintln!("Semantic error: Type mismatch: wrong argument type for param condition: expected boolean, got {}", args[0].etype);
                     return;
                 }
             }
             else if let Some(&Definition::Function(_, ref params, _, _)) = nt.find_definition(&name) {
                 for (ref mut arg, ref param) in args.iter_mut().zip(params.iter()) {
                     if !check_types(&arg.etype, &param.vtype) {
-                        eprintln!("Type mismatch: wrong argument type for param {}: expected {}, got {}", param.name, param.vtype, arg.etype);
+                        eprintln!("Semantic error: Type mismatch: wrong argument type for param {}: expected {}, got {}", param.name, param.vtype, arg.etype);
                         return;
                     }
                     if param.is_ref {
@@ -903,7 +923,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                              &mut Expression::Variable(_, _) => {}
                              &mut Expression::Index(_, _) => {}
                              _ => {
-                                 eprintln!("Argument corresponding to a var parameter must be either a variable or an array subscript");
+                                 eprintln!("Semantic error: Argument corresponding to a var parameter must be either a variable or an array subscript");
                                  return;
                              }
                          }
@@ -919,7 +939,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                         new_arg.make_ref = true;
                         args.push(new_arg);
                     } else {
-                        eprintln!("Wrong number of arguments given for {}", name);
+                        eprintln!("Semantic error: Wrong number of arguments given for {}", name);
                         return;
                     }
                 }
@@ -956,7 +976,7 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
             if let Some(&Definition::Variable(Parameter { vtype: ref t, .. })) = nt.find_definition(&name) {
                 t.clone()
             } else {
-                eprintln!("not a variable: {}", name);
+                eprintln!("Semantic error: not a variable: {}", name);
                 Type::Error
             }
         },
@@ -964,7 +984,7 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
             if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {
                 (**t).clone()
             } else {
-                eprintln!("not an array: {}", name);
+                eprintln!("Semantic error: not an array: {}", name);
                 Type::Error
             }
         },
@@ -975,7 +995,7 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
             else if let Some(&Definition::Function(_, _, ref t, _)) = nt.find_definition(name) {
                 t.clone()
             } else {
-                eprintln!("not a function: {}", name);
+                eprintln!("Semantic error: not a function: {}", name);
                 Type::Error
             }
         },
