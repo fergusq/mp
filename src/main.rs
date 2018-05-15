@@ -186,6 +186,11 @@ fn lex(code: &str) -> TokenList {
                 value: parse_number(&mut chars),
                 line: line,
             });
+        } else if chr == '"' {
+            tokens.push(Token {
+                value: TokenValue::String(parse_string(&mut chars)),
+                line: line,
+            });
         } else if chr.is_whitespace() {
             let whitespace = parse_token(&mut chars, char::is_whitespace);
             /*tokens.push(Token {
@@ -255,6 +260,27 @@ where
         }
     }
     return word;
+}
+
+fn parse_string(chars: &mut Peekable<Chars>) -> String {
+    let mut string = String::new();
+    chars.next(); // opening quote
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            break;
+        } else if c == '\\' {
+            let c = chars.next().unwrap();
+            match c {
+                'n' => string.push('\n'),
+                '\\' => string.push('\\'),
+                '"' => string.push('"'),
+                x => string.push(x)
+            }
+        } else {
+            string.push(c);
+        }
+    }
+    return string;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -339,6 +365,7 @@ impl ExpressionBox {
 enum Expression {
     Integer(i32),
     Real(f32),
+    String(String),
     Assign(ExpressionBox, ExpressionBox),
     BiOperator(BinaryOperator, ExpressionBox, ExpressionBox),
     UnOperator(UnaryOperator, ExpressionBox),
@@ -630,6 +657,9 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
         Some(Token { value: TokenValue::Real(x), line: _ }) => {
             return ExpressionBox::new(Expression::Real(x));
         },
+        Some(Token { value: TokenValue::String(x), line: _ }) => {
+            return ExpressionBox::new(Expression::String(x));
+        },
         _ => panic!("syntax error")
     }
 }
@@ -904,6 +934,7 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
     match *expr.expr {
         Expression::Integer(_) => Type::Integer,
         Expression::Real(_) => Type::Real,
+        Expression::String(_) => Type::String,
         Expression::BiOperator(BinaryOperator::Add, ref a, _) => a.etype.clone(),
         Expression::BiOperator(BinaryOperator::Sub, ref a, _) => a.etype.clone(),
         Expression::BiOperator(BinaryOperator::Mul, ref a, _) => a.etype.clone(),
@@ -1138,6 +1169,7 @@ impl CodeGenerator {
         match *expr.expr {
             Expression::Integer(ref i) => i.to_string(),
             Expression::Real(ref i) => i.to_string(),
+            Expression::String(ref s) => format!("\"{}\"", s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")),
             Expression::BiOperator(ref op, ref a, ref b) => {
                 let tmp = self.new_var();
                 let op = op.to_c();
