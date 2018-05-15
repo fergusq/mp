@@ -21,6 +21,8 @@ fn main() {
     let mut code = String::new();
     file.read_to_string(&mut code).unwrap();
     
+    code = code.to_lowercase();
+    
     let tokens = &mut lex(&code);
     let mut tree = parse_program(tokens);
     //println!("{:?}", tokens);
@@ -37,8 +39,12 @@ fn main() {
         }
     }
     //println!("== OUTPUT ==");
+    println!("#include <stdlib.h>");
     println!("#include <stdio.h>");
     println!("#include <assert.h>");
+    println!("void *tmp_array;");
+    println!("#define make_array(size, type) (tmp_array = malloc(size*sizeof(type)+sizeof(int)), tmp_array = (int*) tmp_array + 1, array_len(tmp_array) = size, tmp_array)");
+    println!("#define array_len(a) ((int*)(a))[-1]");
     println!("{}", cg.header);
     println!("{}", cg.output);
 }
@@ -666,6 +672,14 @@ impl Nametable {
 fn check_types(a: &Type, b: &Type) -> bool {
     if *a == Type::Error || *b == Type::Error {
         true
+    } else if let &Type::Array(ref t1, ref size1) = a {
+        if let &Type::Array(ref t2, -1) = b {
+            check_types(t1, t2)
+        } else if let &Type::Array(ref t2, ref size2) = b {
+            size1 == size2 && check_types(t1, t2)
+        } else {
+            false
+        }
     } else {
         *a == *b
     }
@@ -950,8 +964,7 @@ impl Type {
             Type::Integer => format!("int {}", var),
             Type::Real => format!("float {}", var),
             Type::String => format!("char *{}", var),
-            Type::Array(ref t, -1) => t.to_c(&format!("*{}", var)),
-            Type::Array(ref t, i) => t.to_c(&format!("{}[{}]", var, i)),
+            Type::Array(ref t, _) => t.to_c(&format!("*{}", var)),
             Type::Void => format!("void {}", var),
             Type::Error => format!("unknown {}", var)
         }
@@ -1059,6 +1072,11 @@ impl CodeGenerator {
         match *stmt {
             Statement::Definition(Definition::Variable(ref par)) => {
                 self.generate(format!("{};", par.to_c()));
+                if let Type::Array(ref t, ref size) = par.vtype {
+                    if *size != -1 {
+                        self.generate(format!("{} = make_array({}, {});", par.name, size, t.to_c(&String::new())));
+                    }
+                }
             }
             Statement::Definition(ref f) /* f on Definition::Function */ => {
                 let tmp = self.new_var();
@@ -1096,19 +1114,19 @@ impl CodeGenerator {
                 self.generate(format!("if (!{}) goto {};", condcode, otherwise_label));
                 self.generate_stmt(then);
                 self.generate(format!("goto {};", out_label));
-                self.generate(format!("{}:", otherwise_label));
+                self.generate(format!("{}:;", otherwise_label));
                 self.generate_stmt(otherwise);
-                self.generate(format!("{}:", out_label));
+                self.generate(format!("{}:;", out_label));
             }
             Statement::While(ref cond, ref body) => {
                 let start_label = self.new_var();
                 let out_label = self.new_var();
-                self.generate(format!("{}:", start_label));
+                self.generate(format!("{}:;", start_label));
                 let condcode = self.generate_expr(cond);
                 self.generate(format!("if (!{}) goto {};", condcode, out_label));
                 self.generate_stmt(body);
                 self.generate(format!("goto {};", start_label));
-                self.generate(format!("{}:", out_label));
+                self.generate(format!("{}:;", out_label));
             }
             Statement::Nop => self.generate_str("/* nop */")
         }
@@ -1152,7 +1170,11 @@ impl CodeGenerator {
             }
             Expression::Index(ref name, ref index) => {
                 let icode = self.generate_expr(index);
-                format!("{}[{}]", name, icode)
+                if make_ref {
+                    format!("({}+{})", name, icode)
+                } else {
+                    format!("{}[{}]", name, icode)
+                }
             }
             Expression::Call(ref name, ref args) => {
                 if name == "read" {
@@ -1181,17 +1203,22 @@ impl CodeGenerator {
                             Type::String => "%s",
                             _ => ""
                         };
-                        self.generate(format!("printf(\"{}\", {});", mode, argcode));
+                        self.generate(format!("printf(\"{}\\n\", {});", mode, argcode));
                     }
-                    String::from("0")
+                    String::from("void")
                 } else {
                     let mut argcodes = Vec::new();
                     for arg in args {
                         argcodes.push(self.generate_expr(arg));
                     }
-                    let tmp = self.new_var();
-                    self.generate(format!("{} = {}({});", etype.to_c(&tmp), name, argcodes.join(", ")));
-                    tmp
+                    if etype == Type::Void {
+                        self.generate(format!("{}({});", name, argcodes.join(", ")));
+                        String::from("void")
+                    } else {
+                        let tmp = self.new_var();
+                        self.generate(format!("{} = {}({});", etype.to_c(&tmp), name, argcodes.join(", ")));
+                        tmp
+                    }
                 }
             }
             Expression::Assign(ref lval, ref rval) => {
