@@ -18,7 +18,7 @@ The compiler will output a warning if the input program uses them.
 The main components of the compiler are the scanner, the parser, the analyser and the code generator.
 The following chapters will describe these components.
 
-.. image: arch.png
+.. image:: arch.png
 
 Lexical grammar
 ===============
