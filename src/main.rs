@@ -321,7 +321,21 @@ fn parse_number(chars: &mut Peekable<Chars>) -> TokenValue {
         // jos seuraava merkki on e, korotetaan merkki annettuun kymmenpotenssiin
         if let Some(&'e') = chars.peek() {
             chars.next();
-            TokenValue::Real(number * 10f32.powi(parse_integer(chars)))
+            if !next_is(chars, |c| char::is_numeric(c) || c == '+' || c == '-') {
+                panic!("Lexical error: Expected an exponet literal");
+            }
+            let sign = match chars.peek() {
+                Some(&'+') => {
+                    chars.next();
+                    1
+                }
+                Some(&'-') => {
+                    chars.next();
+                    -1
+                }
+                _ => 1
+            };
+            TokenValue::Real(number * 10f32.powi(sign*parse_integer(chars)))
         } else {
             TokenValue::Real(number)
         }
@@ -333,6 +347,9 @@ fn parse_number(chars: &mut Peekable<Chars>) -> TokenValue {
 
 // lukee merkkejä niin kauan kun ne ovat numeerisia
 fn parse_integer(chars: &mut Peekable<Chars>) -> i32 {
+    if !next_is(chars, char::is_numeric) {
+        panic!("Lexical error: Expected an integer number literal");
+    }
     parse_token(chars, char::is_numeric).parse::<i32>().unwrap()
 }
 
