@@ -51,6 +51,8 @@ Lexical errors
 The lexer can panic with one of the following errors:
 
 * Expected a real number literal (there are no digits after ``.``)
+* Expected an exponent literal (there are no digits or signs after ``e``)
+* Expected an integer literal (the exponent is malformed)
 * Unclosed string
 * Ungrammatical comment (``{`` is not followed by ``*``)
 * Unclosed comment
@@ -312,3 +314,20 @@ All these errors are fatal and cause the program to immediately stop.
 
 Semantic errors are printed one by one.
 The AST does not contain line number information, so no location is printed with the errors.
+
+Implementation choices
+======================
+
+In addition to the fact that this MPC implements a super set of Mini-Pascal Spring 2018,
+several other implementation-level decisions have been made where the language specification was ambigious.
+
+* Variables are uninitialized. Using an uninitialized variable results in undefined behaviour as in C.
+* It is not possible to allocate an array with a size that is not known compile-time. However, functions were added that can be used to allocate such arrays.
+* Arrays are allocated in heap and they are not deallocated in any case.
+* There are no automatic type casts. (It is not allowed to eg. add an integer to a real.) It is mandatory to use ``integer_to_real`` and ``real_to_integer`` functions to convert values from type to another.
+* Strings are only tokens that are case sensitive. All other tokens can be written either in upper, lower or mixed case.
+
+Missing features
+================
+
+In addition to shortcomings listed in other chapters, this MPC does not allow string concatenation with the ``+`` operator.
