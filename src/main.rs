@@ -239,31 +239,35 @@ fn lex(code: &str) -> TokenList {
     let mut chars = code.chars().peekable();
     let mut line = 1;
     while let Some(&chr) = chars.peek() {
-        // jos seuraava merkki on kirjain tai alaviiva, luetaan identifier
+        // identifier
         if chr.is_alphabetic() || chr == '_' {
             tokens.push(Token {
                 value: TokenValue::Word(parse_token(&mut chars, is_valid_identifier_char).to_lowercase()),
                 line: line,
             })
-        // jos seuraava merkki voi olla osa pitkää operaattoria, luetaan operaattori
+        // pitkä operaattori
         } else if is_valid_operator_char(chr) {
             tokens.push(Token {
                 value: TokenValue::Word(parse_token(&mut chars, is_valid_operator_char)),
                 line: line,
             })
-        // jos seuraava merkki on numeerinen, luetaan kokonaisluku tai liukuluku
+        // kokonaisluku tai liukuluku
         } else if chr.is_numeric() {
             tokens.push(Token {
                 value: parse_number(&mut chars),
                 line: line,
             });
-        // jos seuraava merkki on ", luetaan merkkijono
+        // merkkijono
         } else if chr == '"' {
             tokens.push(Token {
                 value: TokenValue::String(parse_string(&mut chars)),
                 line: line,
             });
-        // jos seuraava merkki on whitespacea, luetaan whitespace-token (TODO)
+        // kommentti (TODO)
+        } else if chr == '{' {
+            let comment = parse_comment(&mut chars);
+            line += comment.matches("\n").count() as i32;
+        // whitespace-token (TODO)
         } else if chr.is_whitespace() {
             let whitespace = parse_token(&mut chars, char::is_whitespace);
             /*tokens.push(Token {
@@ -271,7 +275,7 @@ fn lex(code: &str) -> TokenList {
                 line: line,
             });*/
             line += whitespace.matches("\n").count() as i32;
-        // muulloin luetaan lyhyt operaattori (yksi merkki)
+        // lyhyt operaattori
         } else {
             chars.next();
             tokens.push(Token {
@@ -305,7 +309,7 @@ fn parse_number(chars: &mut Peekable<Chars>) -> TokenValue {
         
         // luetaan desimaaliosa
         if !next_is(chars, char::is_numeric) {
-            panic!("Lexical error: expected a real number literal");
+            panic!("Lexical error: Expected a real number literal");
         }
         let fractional_str = parse_token(chars, char::is_numeric);
         
@@ -355,7 +359,7 @@ fn parse_string(chars: &mut Peekable<Chars>) -> String {
     chars.next(); // avaava lainausmerkki
     while let Some(c) = chars.next() {
         if c == '"' {
-            break;
+            return string;
         } else if c == '\\' {
             let c = chars.next().unwrap();
             match c {
@@ -368,7 +372,25 @@ fn parse_string(chars: &mut Peekable<Chars>) -> String {
             string.push(c);
         }
     }
-    return string;
+    panic!("Lexical error: Unclosed string");
+}
+
+// jäsentää kommentin
+fn parse_comment(chars: &mut Peekable<Chars>) -> String {
+    chars.next(); // avaava sulku
+    if !next_is(chars, |c| c=='*') { panic!("Lexical error: Ungrammatical comment") }
+    
+    let mut comment = String::new();
+    while let Some(c) = chars.next() {
+        if c == '*' {
+            if let Some(&'}') = chars.peek() {
+                chars.next();
+                return comment;
+            }
+        }
+        comment.push(c);
+    }
+    panic!("Lexical error: Unclosed comment");
 }
 
 //////////////////////////////////////////////////////////////////////////////
