@@ -261,6 +261,11 @@ For some expression, a temporary variable is not created. These expression are:
 * Variables
 * Array indexing (see above shortcomings)
 
+Array index compatibility
+-------------------------
+
+For each array subscript, an assert call is generated that checks that the index is within bounds.
+
 References
 ----------
 
@@ -269,4 +274,17 @@ However, when a function or procedure call is generated, the arguments that corr
 This means that normal variables and array subscripts are prefixed with ``&`` and var parameters are used without ``*``.
 
 Errors
+------
+
+A semantic errors causes the type of the expression to be ``Error``.
+The error type is compatible with all types and does not cause any type errors.
+
+Errors
 ======
+
+Errors are divided to lexical errors, syntax errors, semantic errors and semantic warnings.
+There is no error handling for lexical errors and syntax errors.
+All these errors are fatal and cause the program to immediately stop.
+
+Semantic errors are printed one by one.
+The AST does not contain line number information, so no location is printed with the errors.
