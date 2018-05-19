@@ -89,7 +89,7 @@ fn add_make_array_builtin(nt: &mut Nametable, output: &mut String, vtype: Type) 
         Type::Array(Box::new(vtype.clone()), -1),
         Rc::new(RefCell::new(Statement::Nop))
     ));
-    write!(output, "#define {}(size) make_array(size, {})\n", name, vtype.to_c(&String::new()));
+    write!(output, "#define {}(size) make_array(size, {})\n", name, vtype.to_c(&String::new())).unwrap();
 }
 
 fn add_cast_builtin(nt: &mut Nametable, output: &mut String, a: Type, b: Type) {
@@ -100,7 +100,7 @@ fn add_cast_builtin(nt: &mut Nametable, output: &mut String, a: Type, b: Type) {
         b.clone(),
         Rc::new(RefCell::new(Statement::Nop))
     ));
-    write!(output, "#define {}(val) (({})(val))\n", name, b.to_c(&String::new()));
+    write!(output, "#define {}(val) (({})(val))\n", name, b.to_c(&String::new())).unwrap();
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -218,8 +218,8 @@ impl TokenList {
     }
 
     // tulostaa virheviestin
-    fn unexpected(&self) {
-        panic!("{} unexpected token", self.error_context(self.place));
+    fn unexpected(&self) -> ! {
+        panic!("{} unexpected token", self.error_context(self.place))
     }
 }
 
@@ -563,7 +563,7 @@ fn parse_type(tokens: &mut TokenList) -> Type {
             let subtype = parse_type(tokens);
             Type::Array(Box::new(subtype), size)
         }
-        _ => panic!("syntax error")
+        _ => tokens.unexpected()
     }
 }
 
@@ -590,7 +590,7 @@ fn parse_statement(tokens: &mut TokenList) -> Vec<Statement> {
         }
     }
     else {
-        panic!("");
+        tokens.unexpected()
     }
 }
 
@@ -734,7 +734,7 @@ macro_rules! precedence_level {
                     let operator = parse_binary_operator(kw);
                     lhs = ExpressionBox::new(Expression::BiOperator(operator, lhs, $subexpr_parser(tokens)));
                 } else {
-                    panic!();
+                    tokens.unexpected();
                 }
             }
             // palautetaan lhs
@@ -828,7 +828,7 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
             return ExpressionBox::new(Expression::String(x));
         },
         // muulloin:
-        _ => panic!("syntax error")
+        _ => tokens.unexpected()
     }
 }
 
@@ -933,7 +933,7 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
                     // etsitään nonlokaalit
                     let mut nonlocals = Vec::new();
                     for map in &nt.stack {
-                        for (name, def) in map {
+                        for (_name, def) in map {
                             match def {
                                 &Definition::Variable(ref par) => {
                                     let new_par = Parameter::new(par.name.clone(), par.vtype.clone(), true);
@@ -951,7 +951,7 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
                     
                     name
                 },
-                &mut Definition::Variable(Parameter { name: ref name, .. }) => name
+                &mut Definition::Variable(Parameter { ref name, .. }) => name
             };
             nt.peek().insert(name.clone(), def.clone()); // lisätään määritelmä symbolitauluun
         }
@@ -1037,7 +1037,12 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
                 return;
             }
         }
-        &mut Statement::SimpleReturn => {}
+        &mut Statement::SimpleReturn => {
+            if !check_types(&Type::Void, &nt.return_type) {
+                eprintln!("Semantic error: Type mismatch: incorrect return type, expected {}, got void", nt.return_type);
+                return;
+            }
+        }
         &mut Statement::IfElse(ref mut cond, ref mut then, ref mut otherwise) => {
             analyse_expr(cond, nt);
             if !check_types(&cond.etype, &Type::Boolean) {
@@ -1098,7 +1103,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 eprintln!("Semantic error: Type mismatch: index of {} must be integer", name);
                 return;
             }
-            if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {}
+            if let Some(&Definition::Variable(Parameter { vtype: Type::Array(_, _), .. })) = nt.find_definition(&name) {}
             else {
                 eprintln!("Semantic error: Type mismatch: {} is indexed but it is not an array", name);
                 return;
@@ -1117,7 +1122,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                         }
                     }
                 }
-                &mut Expression::Index(ref name, ref mut index) => {
+                &mut Expression::Index(ref name, _) => {
                     if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {
                         if !check_types(&val.etype, &t) {
                             eprintln!("Semantic error: Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype);
@@ -1235,8 +1240,7 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
                 Type::Error
             }
         },
-        Expression::Assign(_, ref rexpr) => rexpr.etype.clone(),
-        _ => Type::Void
+        Expression::Assign(_, ref rexpr) => rexpr.etype.clone()
     }
 }
 
