@@ -1,0 +1,37 @@
+digraph G {
+    TokenList [shape=box,label="TokenList\n- tokens: Vec<Token>\n- place usize"];
+    Token [shape=box,label="Token\n- value: TokenValue\n- line: i32"];
+    TokenValue [shape=box];
+    
+    TokenList -> Token -> TokenValue [arrowhead=vee];
+    
+    Type [shape=box,label="Type (AST)"];
+    Definition [shape=box,label="Definition (AST)"];
+    Parameter [shape=box,label="Parameter (AST)\n- name: String\n- vtype: Type\n- is_ref: bool"];
+    Statement [shape=box,label="Statement (AST)"];
+    ExpressionBox [shape=box,label="ExpressionBox (AST)\n- expr: Expression\n- etype: Type\n- make_ref: bool"];
+    Expression [shape=box,label="Expression (AST)"];
+    
+    VariableDef [shape=octagon,label="Definition::Variable"];
+    FunctionDef [shape=octagon,label="Definition::Function"];
+    
+    Definition -> VariableDef [arrowhead=none,arrowtail=normal];
+    Definition -> FunctionDef [arrowhead=none,arrowtail=normal];
+    
+    FunctionDef -> Parameter [arrowhead=vee];
+    FunctionDef -> Type [arrowhead=vee,label="return type"];
+    
+    VariableDef -> Type [arrowhead=vee];
+    
+    Parameter -> Type [arrowhead=vee];
+    ExpressionBox -> Expression [arrowhead=vee];
+    ExpressionBox -> Type [arrowhead=vee];
+    Definition -> Statement [arrowhead=vee];
+    Statement -> ExpressionBox [arrowhead=vee];
+    
+    Nametable [shape=box,label="Nametable\n- stack: Vec<HashMap<String, Definition>>"];
+    Nametable -> Definition [arrowhead=vee];
+    
+    CodeGenerator [shape=box,label="CodeGenerator\n- indent: usize\n- var_counter: i8\n- output: String\n- header: String\n- queue: Vec<(String, Definition)>"];
+    CodeGenerator -> Definition [arrowhead=vee];
+}
