@@ -25,9 +25,10 @@ Lexical grammar
 
 	identifier = ([:alpha:]|_)+
 	long_operator = ([:=<>]+|)
-	integer = [0-9]+
 	real = [0-9]+\.[0-9]+(e[0-9]+)?
+	integer = [0-9]+
 	string = "(\\.|.)*"
+	comment = \{\*.*\*\}
 	whitespace = \s+
 
 	# all characters that do not match the above classes are short operators
@@ -40,6 +41,18 @@ Strings can contain escape codes that have form ``\.``, where ``.`` is any token
 Three escape codes have a special meaning: ``\\`` becomes ``\``, ``\"`` becomes ``"`` and ``\n`` becomes a newline.
 All other escape codes become the character after the backslash.
 
+The comment will end at the first ``*}``.
+
+Lexical errors
+--------------
+
+The lexer can panic with one of the following errors:
+
+* Expected a real number literal (there are no digits after ``.``)
+* Unclosed string
+* Ungrammatical comment (``{`` is not followed by ``*``)
+* Unclosed comment
+
 Syntax and AST
 ==============
 
@@ -51,12 +64,13 @@ Specifically:
 * Assignment is an expression, not a statement.
 * Arrays can contain arrays. This feature is not fully supported. For example, it is not possible to index a variable twice, instead a temporary variable must be used.
 * Call statement is replaced with a more general expression statement.
+* There are several additional builtin functions for allocating arrays and making type casts.
 
 ::
 
 	PROGRAM ::= "program" IDENTIFIER ";" BLOCK "."
 	
-	BLOCK ::= STATEMENT ";"? | STATEMENT ";" BLOCK
+	BLOCK ::= STATEMENT (";" STATEMENT)* ";"?
 	
 	STATEMENT ::= DEFINITION
 	            | "begin" BLOCK "end"
@@ -67,7 +81,7 @@ Specifically:
 	
 	DEFINITION ::= "procedure" IDENTIFIER "(" (PARAMETER ("," PARAMETER)*)? ")" ";" STATEMENT
 	             | "function" IDENTIFIER "(" (PARAMETER ("," PARAMETER)*)? ")" ":" TYPE ";" STATEMENT
-	             | "var" IDENTIFIER ":" TYPE
+	             | "var" IDENTIFIER ("," IDENTIFIER)* ":" TYPE
 	
 	PARAMETER ::= "var"? IDENTIFIER ":" TYPE
 	
@@ -178,6 +192,14 @@ Procedure and function calls
 If the called procedure or function is local (defined inside a ``begin..end`` block),
 the variables in its block will be added to its parameter list as var parameters (AST is modified).
 Consequently, when a local procedure or function is called, the variables will be added as arguments to the function.
+
+Shortcomings
+------------
+
+The following semantics are **not** included, although they should be:
+
+* Assignment is used only at the statement level and not as an expression. (*)
+* Array types do not contain arrays. (*)
 
 Code generation
 ===============
