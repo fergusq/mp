@@ -139,6 +139,7 @@ All enums have a list of forms (constructors), which contain a name and a list o
 
 Things to note:
 
+* A variable declaration with multiple variables is expanded to multiple statements.
 * ``ExpressionBox`` is a wrapper type that contains fields that all expression share, namely the type and a boolean that tells if the expression should be made a reference (see semantics chapter).
 * There is no separate If and If-Else. An If without an Else is an If-Else where the Else block is a nop.
 * Assignment is an expression, and its left side is also an expression. The parser ensures that the left side is either a variable or an array subscript.
