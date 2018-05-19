@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::fs::File;
 use std::env;
+use std::fmt::Write;
 use std::iter::Peekable;
 use std::str::Chars;
 use std::collections::HashMap;
@@ -16,19 +17,26 @@ fn main() {
     }
 
     let filename = &args[1];
-
+    
+    // luetaan koodi tiedostosta
     let mut file = File::open(filename).unwrap();
     let mut code = String::new();
     file.read_to_string(&mut code).unwrap();
     
-    code = code.to_lowercase();
+    // lisätään builtinit nimitauluun
+    let mut nt = Nametable::new(Type::Void);
+    let mut builtins = String::new();
+    nt.push();
+    add_builtins(&mut nt, &mut builtins);
     
+    // jäsennetään ohjelma
     let tokens = &mut lex(&code);
     let mut tree = parse_program(tokens);
-    //println!("{:?}", tokens);
-    //println!("{:?}", tree);
-    analyse_stmt(&mut tree, &mut Nametable::new(Type::Void), true);
-    //println!("{:?}", tree);
+    
+    // semanttinen analyysi
+    analyse_stmt(&mut tree, &mut nt, true);
+    
+    // koodigeneraatio
     let mut cg = CodeGenerator::new();
     cg.queue.push((String::from("main"), Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree)))));
     while !cg.queue.is_empty() {
@@ -38,15 +46,57 @@ fn main() {
             cg.generate_def(name, def);
         }
     }
-    //println!("== OUTPUT ==");
+    
+    // tulostetaan ulostulo
     println!("#include <stdlib.h>");
     println!("#include <stdio.h>");
     println!("#include <assert.h>");
     println!("void *tmp_array;");
     println!("#define make_array(size, type) (tmp_array = malloc(size*sizeof(type)+sizeof(int)), tmp_array = (int*) tmp_array + 1, array_len(tmp_array) = size, tmp_array)");
     println!("#define array_len(a) ((int*)(a))[-1]");
+    println!("{}", builtins);
     println!("{}", cg.header);
     println!("{}", cg.output);
+}
+
+// BUILTINS
+
+fn add_builtins(nt: &mut Nametable, output: &mut String) {
+    add_make_array_builtin(nt, output, Type::Integer);
+    add_make_array_builtin(nt, output, Type::Real);
+    add_make_array_builtin(nt, output, Type::String);
+    add_make_array_builtin(nt, output, Type::Boolean);
+    add_cast_builtin(nt, output, Type::Integer, Type::Real);
+    add_cast_builtin(nt, output, Type::Real, Type::Integer);
+    
+    nt.peek().insert(String::from("assert"), Definition::Function(
+        String::from("assert"),
+        vec![Parameter::new(String::from("condition"), Type::Boolean, false)],
+        Type::Void,
+        Rc::new(RefCell::new(Statement::Nop))
+    ));
+}
+
+fn add_make_array_builtin(nt: &mut Nametable, output: &mut String, vtype: Type) {
+    let name = format!("make_{}_array", vtype);
+    nt.peek().insert(name.clone(), Definition::Function(
+        name.clone(),
+        vec![Parameter::new(String::from("size"), Type::Integer, false)],
+        Type::Array(Box::new(vtype.clone()), -1),
+        Rc::new(RefCell::new(Statement::Nop))
+    ));
+    write!(output, "#define {}(size) make_array(size, {})\n", name, vtype.to_c(&String::new()));
+}
+
+fn add_cast_builtin(nt: &mut Nametable, output: &mut String, a: Type, b: Type) {
+    let name = format!("{}_to_{}", a, b);
+    nt.peek().insert(name.clone(), Definition::Function(
+        name.clone(),
+        vec![Parameter::new(String::from("val"), a, false)],
+        b.clone(),
+        Rc::new(RefCell::new(Statement::Nop))
+    ));
+    write!(output, "#define {}(val) (({})(val))\n", name, b.to_c(&String::new()));
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -173,7 +223,7 @@ fn lex(code: &str) -> TokenList {
     while let Some(&chr) = chars.peek() {
         if chr.is_alphabetic() || chr == '_' {
             tokens.push(Token {
-                value: TokenValue::Word(parse_token(&mut chars, is_valid_identifier_char)),
+                value: TokenValue::Word(parse_token(&mut chars, is_valid_identifier_char).to_lowercase()),
                 line: line,
             })
         } else if is_valid_operator_char(chr) {
@@ -381,6 +431,28 @@ enum BinaryOperator {
     And, Or
 }
 
+impl BinaryOperator {
+    fn allowed_types(&self) -> Vec<Type> {
+        let num_types = vec![Type::Integer, Type::Real];
+        let bool_types = vec![Type::Boolean];
+        match *self {
+            BinaryOperator::Eq => num_types,
+            BinaryOperator::Neq => num_types,
+            BinaryOperator::Lt => num_types,
+            BinaryOperator::Leq => num_types,
+            BinaryOperator::Gt => num_types,
+            BinaryOperator::Geq => num_types,
+            BinaryOperator::Add => num_types,
+            BinaryOperator::Sub => num_types,
+            BinaryOperator::Mul => num_types,
+            BinaryOperator::Div => num_types,
+            BinaryOperator::Mod => num_types,
+            BinaryOperator::And => bool_types,
+            BinaryOperator::Or => bool_types
+        }
+    }
+}
+
 #[derive(Debug)]
 enum UnaryOperator {
     Plus, Minus, Not, Size
@@ -448,7 +520,7 @@ fn parse_statement(tokens: &mut TokenList) -> Vec<Statement> {
                 },
                 _ => vec![Statement::Expression(parse_expression(tokens))]
             },
-            _ => panic!("")
+            _ => vec![Statement::Expression(parse_expression(tokens))]
         }
     }
     else {
@@ -694,7 +766,7 @@ impl Nametable {
             }
             i -= 1;
         }
-        eprintln!("Semantic error: symbol not found: {}", name);
+        eprintln!("Semantic error: Symbol not found: {}", name);
         None
     }
 }
@@ -712,6 +784,33 @@ fn check_types(a: &Type, b: &Type) -> bool {
         }
     } else {
         *a == *b
+    }
+}
+
+fn check_identifier(ident: &String) {
+    let is_keyword = match &ident[..] {
+        "or" => true,
+        "and" => true,
+        "not" => true,
+        "if" => true,
+        "then" => true,
+        "else" => true,
+        "of" => true,
+        "while" => true,
+        "do" => true,
+        "begin" => true,
+        "end" => true,
+        "var" => true,
+        "array" => true,
+        "procedure" => true,
+        "function" => true,
+        "program" => true,
+        "assert" => true,
+        "return" => true,
+        _ => false
+    };
+    if is_keyword {
+        eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: use of keyword as identifier");
     }
 }
 
@@ -753,17 +852,33 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
         }
         match stmt {
             &mut Statement::Block(_) => block_count += 1,
-            _ => {}
+            &mut Statement::Definition(_) => {}
+            _ => {
+                if is_top {
+                    eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: there should be only definitions and a block at the top level");
+                }
+            }
+        }
+        if !is_top {
+            if let &mut Statement::Expression(ref expr) = stmt {
+                match *expr.expr {
+                    Expression::Call(_, _) => {}
+                    Expression::Assign(_, _) => {}
+                    _ => {
+                        eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: expression statements should be either calls or assignments");
+                    }
+                }
+            }
         }
     }
     
     if is_top {
         if block_count != 1 {
-            eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: there should be one at only one block at the top level");
+            eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: there should be only one block at the top level");
         }
         match block.last() {
             Some(&Statement::Block(_)) => {}
-            _ => eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: there should be block at the end of the program")
+            _ => eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: there should be a block at the end of the program")
         }
     }
     
@@ -775,7 +890,8 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
 
 fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
     match stmt {
-        &mut Statement::Definition(Definition::Function(ref _name, ref params, ref return_type, ref mut body)) => {
+        &mut Statement::Definition(Definition::Function(ref name, ref params, ref return_type, ref mut body)) => {
+            check_identifier(name);
             let mut new_nt = Nametable::new(return_type.clone());
             new_nt.push();
             for map in &nt.stack {
@@ -792,7 +908,9 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
             
             analyse_stmt(&mut *body.borrow_mut(), &mut new_nt, false);
         }
-        &mut Statement::Definition(Definition::Variable(_)) => {}
+        &mut Statement::Definition(Definition::Variable(ref par)) => {
+            check_identifier(&par.name);
+        }
         &mut Statement::Block(ref mut stmts) => {
             analyse_block(stmts, nt, is_top);
         }
@@ -819,7 +937,7 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
         &mut Statement::While(ref mut cond, ref mut body) => {
             analyse_expr(cond, nt);
             if !check_types(&cond.etype, &Type::Boolean) {
-                eprintln!("Semantic error: Type mismatch: while condition must be boolean");
+                eprintln!("Semantic error: Type mismatch: while condition must be boolean: expected boolean, got {}", cond.etype);
                 return;
             }
             analyse_stmt(body, nt, false);
@@ -830,12 +948,16 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
 
 fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
     match &mut *expr.expr {
-        &mut Expression::BiOperator(_, ref mut a, ref mut b) => {
+        &mut Expression::BiOperator(ref op, ref mut a, ref mut b) => {
             analyse_expr(a, nt);
             analyse_expr(b, nt);
             if !check_types(&a.etype, &b.etype) {
                 eprintln!("Semantic error: Type mismatch: {} and {} are not compatible", a.etype, b.etype);
                 return;
+            }
+            let allowed_types = op.allowed_types();
+            if !allowed_types.contains(&a.etype) {
+                eprintln!("Semantic error: Type mismatch: {:?} expected {:?}, got {}", op, allowed_types, a.etype);
             }
         }
         &mut Expression::UnOperator(UnaryOperator::Plus, ref mut a) => {
@@ -847,8 +969,24 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             }
         }
         &mut Expression::Variable(ref name, ref mut reference) => {
+            check_identifier(name);
             if let Some(&Definition::Variable(Parameter { is_ref: ref it, .. })) = nt.find_definition(&name) {
                 **reference = *it;
+            } else {
+                eprintln!("Semantic error: {} is not a variable but it is used like one", name);
+                return;
+            }
+        }
+        &mut Expression::Index(ref name, ref mut index) => {
+            analyse_expr(index, nt);
+            if !check_types(&index.etype, &Type::Integer) {
+                eprintln!("Semantic error: Type mismatch: index of {} must be integer", name);
+                return;
+            }
+            if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {}
+            else {
+                eprintln!("Semantic error: Type mismatch: {} is indexed but it is not an array", name);
+                return;
             }
         }
         &mut Expression::Assign(ref mut var, ref mut val) => {
@@ -858,30 +996,17 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 &mut Expression::Variable(ref name, _) => {
                     if let Some(&Definition::Variable(Parameter { vtype: ref t, .. })) = nt.find_definition(&name) {
                         if !check_types(&val.etype, &t) {
-                            eprintln!("Semantic error: Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype);
+                            eprintln!("Semantic error: Type mismatch: lval {} has wrong type: expected {}, got {}", name, t, val.etype);
                             return;
                         }
-                    }
-                    else {
-                        eprintln!("Semantic error: Left side of assignment is not lval");
-                        return;
                     }
                 }
                 &mut Expression::Index(ref name, ref mut index) => {
-                    analyse_expr(index, nt);
-                    if !check_types(&index.etype, &Type::Integer) {
-                        eprintln!("Semantic error: Type mismatch: index must be integer");
-                        return;
-                    }
                     if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {
                         if !check_types(&val.etype, &t) {
-                            eprintln!("Semantic error: Type mismatch: expected {}, got {}", t, val.etype);
+                            eprintln!("Semantic error: Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype);
                             return;
                         }
-                    }
-                    else {
-                        eprintln!("Semantic error: Type mismatch: expected array");
-                        return;
                     }
                 }
                 _ => {
@@ -891,6 +1016,9 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             }
         }
         &mut Expression::Call(ref name, ref mut args) => {
+            if name != "assert" { // assert on avainsana, mutta sitä saa käyttää funktionimenä funktiota kutsuttaessa
+                check_identifier(name);
+            }
             for arg in &mut *args {
                 analyse_expr(arg, nt);
             }
@@ -902,20 +1030,10 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             else if name == "writeln" {
                 // ok
             }
-            else if name == "assert" {
-                if args.len() != 1 {
-                    eprintln!("Semantic error: Wrong number of arguments given for assert");
-                    return;
-                }
-                if !check_types(&args[0].etype, &Type::Boolean) {
-                    eprintln!("Semantic error: Type mismatch: wrong argument type for param condition: expected boolean, got {}", args[0].etype);
-                    return;
-                }
-            }
             else if let Some(&Definition::Function(_, ref params, _, _)) = nt.find_definition(&name) {
                 for (ref mut arg, ref param) in args.iter_mut().zip(params.iter()) {
                     if !check_types(&arg.etype, &param.vtype) {
-                        eprintln!("Semantic error: Type mismatch: wrong argument type for param {}: expected {}, got {}", param.name, param.vtype, arg.etype);
+                        eprintln!("Semantic error: Type mismatch: wrong argument type for param {} of function {}: expected {}, got {}", param.name, name, param.vtype, arg.etype);
                         return;
                     }
                     if param.is_ref {
@@ -976,7 +1094,7 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
             if let Some(&Definition::Variable(Parameter { vtype: ref t, .. })) = nt.find_definition(&name) {
                 t.clone()
             } else {
-                eprintln!("Semantic error: not a variable: {}", name);
+                eprintln!("Semantic error: Not a variable: {}", name);
                 Type::Error
             }
         },
@@ -984,18 +1102,18 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
             if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {
                 (**t).clone()
             } else {
-                eprintln!("Semantic error: not an array: {}", name);
+                eprintln!("Semantic error: Not an array: {}", name);
                 Type::Error
             }
         },
         Expression::Call(ref name, _) => {
-            if ["writeln", "read", "assert"].contains(&name.as_str()) {
+            if ["writeln", "read"].contains(&name.as_str()) {
                 Type::Void
             }
             else if let Some(&Definition::Function(_, _, ref t, _)) = nt.find_definition(name) {
                 t.clone()
             } else {
-                eprintln!("Semantic error: not a function: {}", name);
+                eprintln!("Semantic error: Not a function: {}", name);
                 Type::Error
             }
         },
@@ -1195,7 +1313,7 @@ impl CodeGenerator {
                 let op = op.to_c();
                 let acode = self.generate_expr(a);
                 let bcode = self.generate_expr(b);
-                self.generate(format!("{} = ({}) {} ({});", etype.to_c(&tmp), acode, op, bcode));
+                self.generate(format!("{} = {} {} {};", etype.to_c(&tmp), acode, op, bcode));
                 tmp
             }
             Expression::UnOperator(ref op, ref a) => {
@@ -1222,8 +1340,9 @@ impl CodeGenerator {
             }
             Expression::Index(ref name, ref index) => {
                 let icode = self.generate_expr(index);
+                self.generate(format!("assert(0 <= {} && {} < array_len({}));", icode, icode, name));
                 if make_ref {
-                    format!("({}+{})", name, icode)
+                    format!("&{}[{}]", name, icode)
                 } else {
                     format!("{}[{}]", name, icode)
                 }
@@ -1247,6 +1366,8 @@ impl CodeGenerator {
                     }
                     String::from("0")
                 } else if name == "writeln" {
+                    let mut formatcodes = Vec::new();
+                    let mut argcodes = Vec::new();
                     for arg in args {
                         let argcode = self.generate_expr(arg);
                         let mode = match arg.etype {
@@ -1255,8 +1376,10 @@ impl CodeGenerator {
                             Type::String => "%s",
                             _ => ""
                         };
-                        self.generate(format!("printf(\"{}\\n\", {});", mode, argcode));
+                        formatcodes.push(mode);
+                        argcodes.push(argcode);
                     }
+                    self.generate(format!("printf(\"{}\\n\", {});", formatcodes.join(" "), argcodes.join(", ")));
                     String::from("void")
                 } else {
                     let mut argcodes = Vec::new();
