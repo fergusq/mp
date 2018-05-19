@@ -8,6 +8,17 @@ Code Generation Spring 2018
 .. contents:: Table of Contents
    :backlinks: none
 
+Building and usage
+==================
+
+Assuming that Rust and Cargo are installed::
+
+	cargo run ex/average.pas >average.c
+
+It is also possible to use the precompiled Linux binary::
+
+	bin/mp ex/average.pas >average.c
+
 Introduction
 ============
 
