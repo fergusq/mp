@@ -5,6 +5,9 @@
 Iikka Hauhio,
 Code Generation Spring 2018
 
+.. contents:: Table of Contents
+   :backlinks: none
+
 Introduction
 ============
 
