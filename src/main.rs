@@ -37,6 +37,7 @@ fn main() {
     analyse_stmt(&mut tree, &mut nt, true);
     
     // koodigeneraatio
+    // ylätason koodi laitetaan uuden main-funktion sisään
     let mut cg = CodeGenerator::new();
     cg.queue.push((String::from("main"), Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree)))));
     while !cg.queue.is_empty() {
@@ -62,13 +63,16 @@ fn main() {
 // BUILTINS
 
 fn add_builtins(nt: &mut Nametable, output: &mut String) {
+    // lisätään arraynluontifunktiot
     add_make_array_builtin(nt, output, Type::Integer);
     add_make_array_builtin(nt, output, Type::Real);
     add_make_array_builtin(nt, output, Type::String);
     add_make_array_builtin(nt, output, Type::Boolean);
+    // lisätään tyyppimuunnosfunktiot
     add_cast_builtin(nt, output, Type::Integer, Type::Real);
     add_cast_builtin(nt, output, Type::Real, Type::Integer);
     
+    // lisätään assert-funktio
     nt.peek().insert(String::from("assert"), Definition::Function(
         String::from("assert"),
         vec![Parameter::new(String::from("condition"), Type::Boolean, false)],
@@ -127,6 +131,7 @@ struct TokenList {
 }
 
 impl TokenList {
+    // peek palauttaa seuraavan tokenin, mutta ei poista sitä jonosta
     fn peek(&self) -> Option<Token> {
         let mut i = self.place;
         while i < self.tokens.len() {
@@ -138,21 +143,25 @@ impl TokenList {
         None
     }
 
+    // next palauttaa seuraavan tokenin ja poistaa sen jonosta
     fn next(&mut self) -> Option<Token> {
         let val = self.peek();
         self.place += 1; // TODO whitespacet
         val
     }
 
+    // kertoo, onko tokeneita jäljellä
     fn eof(&self) -> bool {
         self.place >= self.tokens.len()
     }
 
+    // palauttaa merkkijonon, jossa on rivinumero ja nykyinen token virheviestejä varten
     fn error_context(&self, place: usize) -> String {
         let token = &self.tokens[if place == 0 {place} else {place-1}];
         format!("[line {}, token {:?}]", token.line, token.value)
     }
 
+    // palauttaa truen tai falsen, jos seuraava token on sama kuin annettu merkkijono
     fn next_is(&self, kw: &str) -> bool {
         if let Some(Token { value: TokenValue::Word(word), line: _ }) = self.peek() {
             kw == word
@@ -162,6 +171,7 @@ impl TokenList {
         }
     }
 
+    // kertoo, onko seuraava token jokin annetuista merkkijonoista
     fn next_in(&self, kws: &[&str]) -> bool {
         if let Some(Token { value: TokenValue::Word(word), line: _ }) = self.peek() {
             kws.contains(&word.as_str())
@@ -171,6 +181,7 @@ impl TokenList {
         }
     }
 
+    // panikoi, jos seuraava token ei ole annettu merkkijono
     fn accept(&mut self, kw: &str) {
         if let Some(Token { value: TokenValue::Word(word), line: _ }) = self.next() {
             if word == kw {
@@ -180,6 +191,7 @@ impl TokenList {
         panic!("{} expected `{}'", self.error_context(self.place), kw);
     }
 
+    // sama kuin next_is, mutta poistaa tokenin jonosta jos se on sama kuin annettu merkkijono
     fn try_accept(&mut self, kw: &str) -> bool {
         if self.next_is(kw) {
             self.next();
@@ -189,6 +201,7 @@ impl TokenList {
         }
     }
 
+    // palauttaa seuraavan identifierin (TODO: validoi, että identifier koostuu sallituista merkeistä) tai panikoi
     fn accept_identifier(&mut self) -> String {
         if let Some(Token { value: TokenValue::Word(word), line: _ }) = self.next() {
             return word;
@@ -196,6 +209,7 @@ impl TokenList {
         panic!("{} expected identifier", self.error_context(self.place));
     }
 
+    // palauttaa seuraavan kokonaisluvun tai panikoi
     fn accept_integer(&mut self) -> i32 {
         if let Some(Token { value: TokenValue::Integer(i), line: _ }) = self.next() {
             return i;
@@ -203,44 +217,53 @@ impl TokenList {
         panic!("{} expected integer", self.error_context(self.place));
     }
 
+    // tulostaa virheviestin
     fn unexpected(&self) {
         panic!("{} unexpected token", self.error_context(self.place));
     }
 }
 
+// funktio, joka kertoo onko annettu merkki validi osa identifieriä (alfanumeerinen tai _)
 fn is_valid_identifier_char(chr: char) -> bool {
     return chr.is_alphanumeric() || chr == '_';
 }
 
+// funktio, joka kertoo onko annettu merkki validi osa pitkää operaattoria (=, >=, <>, :=)
 fn is_valid_operator_char(chr: char) -> bool {
     return ['<', '>', '=', ':'].contains(&chr);
 }
 
+// skannaa koodin ja palauttaa TokenList-olion
 fn lex(code: &str) -> TokenList {
     let mut tokens = Vec::new();
     let mut chars = code.chars().peekable();
     let mut line = 1;
     while let Some(&chr) = chars.peek() {
+        // jos seuraava merkki on kirjain tai alaviiva, luetaan identifier
         if chr.is_alphabetic() || chr == '_' {
             tokens.push(Token {
                 value: TokenValue::Word(parse_token(&mut chars, is_valid_identifier_char).to_lowercase()),
                 line: line,
             })
+        // jos seuraava merkki voi olla osa pitkää operaattoria, luetaan operaattori
         } else if is_valid_operator_char(chr) {
             tokens.push(Token {
                 value: TokenValue::Word(parse_token(&mut chars, is_valid_operator_char)),
                 line: line,
             })
+        // jos seuraava merkki on numeerinen, luetaan kokonaisluku tai liukuluku
         } else if chr.is_numeric() {
             tokens.push(Token {
                 value: parse_number(&mut chars),
                 line: line,
             });
+        // jos seuraava merkki on ", luetaan merkkijono
         } else if chr == '"' {
             tokens.push(Token {
                 value: TokenValue::String(parse_string(&mut chars)),
                 line: line,
             });
+        // jos seuraava merkki on whitespacea, luetaan whitespace-token (TODO)
         } else if chr.is_whitespace() {
             let whitespace = parse_token(&mut chars, char::is_whitespace);
             /*tokens.push(Token {
@@ -248,6 +271,7 @@ fn lex(code: &str) -> TokenList {
                 line: line,
             });*/
             line += whitespace.matches("\n").count() as i32;
+        // muulloin luetaan lyhyt operaattori (yksi merkki)
         } else {
             chars.next();
             tokens.push(Token {
@@ -259,6 +283,7 @@ fn lex(code: &str) -> TokenList {
     return TokenList { tokens: tokens, place: 0 };
 }
 
+// funktio, joka täyttääkö seuraava merkki annetun ehdon
 fn next_is<F>(chars: &mut Peekable<Chars>, f: F) -> bool
 where
     F: FnOnce(char) -> bool,
@@ -270,32 +295,44 @@ where
     }
 }
 
+// skannaa kokonaisluvun tai liukuluvun
 fn parse_number(chars: &mut Peekable<Chars>) -> TokenValue {
+    // luetaan ensin kokonaislukuosa
     let integer_part = parse_integer(chars);
+    // jos seuraava merkki on desimaalipiste, luetaan desimaaliosa
     if let Some(&'.') = chars.peek() {
         chars.next();
+        
+        // luetaan desimaaliosa
         if !next_is(chars, char::is_numeric) {
             panic!("Lexical error: expected a real number literal");
         }
         let fractional_str = parse_token(chars, char::is_numeric);
+        
+        // lasketaan lukuarvo
         let fractional_part =
             fractional_str.parse::<i32>().unwrap() as f32 / 10f32.powi(fractional_str.len() as i32);
         let number = integer_part as f32 + fractional_part;
+        
+        // jos seuraava merkki on e, korotetaan merkki annettuun kymmenpotenssiin
         if let Some(&'e') = chars.peek() {
             chars.next();
             TokenValue::Real(number * 10f32.powi(parse_integer(chars)))
         } else {
             TokenValue::Real(number)
         }
+    // muulloin palautetaan kokonaisluku-token
     } else {
         TokenValue::Integer(integer_part)
     }
 }
 
+// lukee merkkejä niin kauan kun ne ovat numeerisia
 fn parse_integer(chars: &mut Peekable<Chars>) -> i32 {
     parse_token(chars, char::is_numeric).parse::<i32>().unwrap()
 }
 
+// lukee merkkejä niin kauan kun ne täyttävät annetun ehdon
 fn parse_token<F>(chars: &mut Peekable<Chars>, f: F) -> String
 where
     F: Fn(char) -> bool,
@@ -312,9 +349,10 @@ where
     return word;
 }
 
+// jäsentää merkkijonon
 fn parse_string(chars: &mut Peekable<Chars>) -> String {
     let mut string = String::new();
-    chars.next(); // opening quote
+    chars.next(); // avaava lainausmerkki
     while let Some(c) = chars.next() {
         if c == '"' {
             break;
@@ -350,6 +388,7 @@ enum Type {
     Error
 }
 
+// toteutetaan Display, jotta Typen voi muuttaa merkkijonoksi
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -431,6 +470,7 @@ enum BinaryOperator {
     And, Or
 }
 
+// palauttaa tyypit, jotka voivat olla operaattorin operandin tyyppejä (analyysiä varten)
 impl BinaryOperator {
     fn allowed_types(&self) -> Vec<Type> {
         let num_types = vec![Type::Integer, Type::Real];
@@ -458,6 +498,7 @@ enum UnaryOperator {
     Plus, Minus, Not, Size
 }
 
+// parsii koko ohjelman
 fn parse_program(tokens: &mut TokenList) -> Statement {
     tokens.accept("program");
     let _id = tokens.accept_identifier();
@@ -467,6 +508,7 @@ fn parse_program(tokens: &mut TokenList) -> Statement {
     return Statement::Block(block);
 }
 
+// parsii listan lauseita (ei begin- ja end-avainsanoja)
 fn parse_block(tokens: &mut TokenList) -> Vec<Statement> {
     let mut stmts = Vec::new();
     stmts.extend(parse_statement(tokens));
@@ -479,6 +521,7 @@ fn parse_block(tokens: &mut TokenList) -> Vec<Statement> {
     return stmts;
 }
 
+// parsii tyypin
 fn parse_type(tokens: &mut TokenList) -> Type {
     let typename = tokens.accept_identifier();
     match &typename[..] {
@@ -502,6 +545,7 @@ fn parse_type(tokens: &mut TokenList) -> Type {
     }
 }
 
+// parsii lauseen (ulostulona voi olla useita lauseita, sillä var-lauseet joissa on monta muuttujaa laajennetaan useiksi lauseksi)
 fn parse_statement(tokens: &mut TokenList) -> Vec<Statement> {
     if let Some(Token { value: val, line: _ }) = tokens.peek() {
         match val {
@@ -528,6 +572,7 @@ fn parse_statement(tokens: &mut TokenList) -> Vec<Statement> {
     }
 }
 
+// parsii lauseen ja varmistaa, että ulostulona on vain yksi lause
 fn parse_single_statement(tokens: &mut TokenList) -> Statement {
     let place = tokens.place;
     let mut statements = parse_statement(tokens);
@@ -537,6 +582,7 @@ fn parse_single_statement(tokens: &mut TokenList) -> Statement {
     statements.pop().unwrap()
 }
 
+// parsii funktion tai proseduurin
 fn parse_function_def(tokens: &mut TokenList, is_proc: bool) -> Statement {
     tokens.accept(if is_proc {"procedure"} else {"function"});
     let name = tokens.accept_identifier();
@@ -554,6 +600,7 @@ fn parse_function_def(tokens: &mut TokenList, is_proc: bool) -> Statement {
     Statement::Definition(Definition::Function(name, parameters, vtype, Rc::new(RefCell::new(body))))
 }
 
+// parsii parametrilistan
 fn parse_parameters(tokens: &mut TokenList) -> Vec<Parameter> {
     let mut params = Vec::new();
     if !tokens.next_is(")") {
@@ -565,6 +612,7 @@ fn parse_parameters(tokens: &mut TokenList) -> Vec<Parameter> {
     params
 }
 
+// parsii yhden parametrin
 fn parse_parameter(tokens: &mut TokenList) -> Parameter {
     let is_ref = tokens.try_accept("var");
     let name = tokens.accept_identifier();
@@ -573,6 +621,7 @@ fn parse_parameter(tokens: &mut TokenList) -> Parameter {
     Parameter::new(name, vtype, is_ref)
 }
 
+// parsii muuttujamäärityksen
 fn parse_variable_def(tokens: &mut TokenList) -> Vec<Statement> {
     tokens.accept("var");
     let mut names = Vec::new();
@@ -585,6 +634,7 @@ fn parse_variable_def(tokens: &mut TokenList) -> Vec<Statement> {
     names.into_iter().map(|n| Statement::Definition(Definition::Variable(Parameter::new(n, vtype.clone(), false)))).collect()
 }
 
+// parsii return-lauseen
 fn parse_return(tokens: &mut TokenList) -> Statement {
     tokens.accept("return");
     if tokens.next_is(";") || tokens.next_is("end") {
@@ -594,6 +644,7 @@ fn parse_return(tokens: &mut TokenList) -> Statement {
     }
 }
 
+// parsii if-lauseen
 fn parse_if(tokens: &mut TokenList) -> Statement {
     tokens.accept("if");
     let cond = parse_expression(tokens);
@@ -607,6 +658,7 @@ fn parse_if(tokens: &mut TokenList) -> Statement {
     Statement::IfElse(cond, Box::new(then), Box::new(otherwise))
 }
 
+// parsii while-lauseen
 fn parse_while(tokens: &mut TokenList) -> Statement {
     tokens.accept("while");
     let cond = parse_expression(tokens);
@@ -615,6 +667,7 @@ fn parse_while(tokens: &mut TokenList) -> Statement {
     Statement::While(cond, Box::new(body))
 }
 
+// palauttaa merkkijonoa vastaavan operaattoriolion
 fn parse_binary_operator(operator: String) -> BinaryOperator {
     match &operator[..] {
         "<" => BinaryOperator::Lt,
@@ -636,6 +689,7 @@ fn parse_binary_operator(operator: String) -> BinaryOperator {
     }
 }
 
+// palauttaa merkkijonoa vastaavan operaattoriolion
 fn parse_unary_operator(operator: String) -> UnaryOperator {
     match &operator[..] {
         "+" => UnaryOperator::Plus,
@@ -645,10 +699,14 @@ fn parse_unary_operator(operator: String) -> UnaryOperator {
     }
 }
 
+// makro, jonka pohjalta luodaan jokaista laskujärjestystasoa vastaava jäsennysfunktio
 macro_rules! precedence_level {
+//  funktion nimi, seuraavan tason jäsennin, operaattorit
     ($name:ident, $subexpr_parser:ident, $operator_list:expr) => {
         fn $name(tokens: &mut TokenList) -> ExpressionBox {
+            // parsitaan seuraavan tason lauseke
             let mut lhs = $subexpr_parser(tokens);
+            // niin kauan kun seuraavaksi tulee operaattori, parsitaan se ja seuraavan tason lauseke
             while tokens.next_in($operator_list) {
                 if let Some(Token { value: TokenValue::Word(kw), line: _ }) = tokens.next() {
                     let operator = parse_binary_operator(kw);
@@ -657,6 +715,7 @@ macro_rules! precedence_level {
                     panic!();
                 }
             }
+            // palautetaan lhs
             lhs
         }
     };
@@ -666,6 +725,7 @@ precedence_level!(parse_expression, parse_simple_expression, &["=", "<>", "<", "
 precedence_level!(parse_simple_expression, parse_term, &["+", "-", "or"]);
 precedence_level!(parse_term, parse_size, &["*", "/", "%", "and"]);
 
+// parsitaan .size-operaattori
 fn parse_size(tokens: &mut TokenList) -> ExpressionBox {
     let mut lhs = parse_factor(tokens);
     while tokens.next_is(".") {
@@ -676,20 +736,26 @@ fn parse_size(tokens: &mut TokenList) -> ExpressionBox {
     lhs
 }
 
+// parsii tekijän
 fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
+    // luetaan token ja päätellään sen perusteella lausekkeen tyyppi
     match tokens.next() {
         Some(Token { value: TokenValue::Word(word), line: _ }) => {
+            // sulkulauseke
             if word == "(" {
                 let expr = parse_expression(tokens);
                 tokens.accept(")");
                 return expr;
             }
+            // unaarioperaattori
             if word == "not" || word == "+" || word == "-" {
                 let expr = parse_factor(tokens);
                 return ExpressionBox::new(Expression::UnOperator(parse_unary_operator(word), expr));
             }
+            // tutkitaan seuraavaa tokenia
             if let Some(Token { value: TokenValue::Word(word2), line: _ }) = tokens.peek() {
                 let expr = match &word2[..] {
+                    // funktiokutsu
                     "(" => {
                         tokens.accept("(");
                         let mut args = Vec::new();
@@ -702,36 +768,44 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                         tokens.accept(")");
                         ExpressionBox::new(Expression::Call(word, args))
                     },
+                    // arrayindeksointi
                     "[" => {
                         tokens.accept("[");
                         let index = parse_expression(tokens);
                         tokens.accept("]");
                         ExpressionBox::new(Expression::Index(word, index))
                     },
+                    // jos seuraava token ei ole ( tai [, kyseessä on tavallinen muuttuja
                     _ => {
                         ExpressionBox::new(Expression::Variable(word, Box::new(false)))
                     }
                 };
+                // jos seuraava token on :=, parsitaan muuttuja-asetus
                 return if tokens.try_accept(":=") {
                     let rexpr = parse_expression(tokens);
                     ExpressionBox::new(Expression::Assign(expr, rexpr))
                 } else {
-                    expr
+                    expr // palautetaan expr
                 };
             }
+            // jos seuraava token ei ollut identifier tai operaattori
             else {
                 return ExpressionBox::new(Expression::Variable(word, Box::new(false)));
             }
         },
+        // kokonaisluku
         Some(Token { value: TokenValue::Integer(x), line: _ }) => {
             return ExpressionBox::new(Expression::Integer(x));
         },
+        // liukuluku
         Some(Token { value: TokenValue::Real(x), line: _ }) => {
             return ExpressionBox::new(Expression::Real(x));
         },
+        // merkkijono
         Some(Token { value: TokenValue::String(x), line: _ }) => {
             return ExpressionBox::new(Expression::String(x));
         },
+        // muulloin:
         _ => panic!("syntax error")
     }
 }
@@ -740,6 +814,7 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
 // SEMANTIC ANALYSIS /////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 
+// symbolitaulutyyppi
 struct Nametable {
     stack: Vec<HashMap<String, Definition>>,
     return_type: Type
@@ -749,16 +824,21 @@ impl Nametable {
     fn new(return_type: Type) -> Nametable {
         Nametable { stack: Vec::new(), return_type: return_type }
     }
+    // lisää uuden "scopen"
     fn push(&mut self) {
         self.stack.push(HashMap::new());
     }
+    // poistaa ylimmän "scopen"
     fn pop(&mut self) {
         self.stack.pop();
     }
+    // palauttaa ylimmän "scopen"
     fn peek(&mut self) -> &mut HashMap<String, Definition> {
         self.stack.last_mut().unwrap()
     }
+    // palauttaa symbolia vastaavan määritelmän
     fn find_definition(&self, name: &String) -> Option<&Definition> {
+        // iteroidaan scopet
         let mut i = self.stack.len();
         while i > 0 {
             if let Some(def) = self.stack[i-1].get(name) {
@@ -771,10 +851,11 @@ impl Nametable {
     }
 }
 
+// tarkistaa, ovatko tyypit yhteensopivia
 fn check_types(a: &Type, b: &Type) -> bool {
-    if *a == Type::Error || *b == Type::Error {
+    if *a == Type::Error || *b == Type::Error { // Error-tyyppi on yhteensopiva kaikkien kanssa
         true
-    } else if let &Type::Array(ref t1, ref size1) = a {
+    } else if let &Type::Array(ref t1, ref size1) = a { // arrayt ovat yhteensopivat, jos elementtien tyypit ovat yhteensopivat JA niillä on sama koko tai b:llä ei ole kokoa
         if let &Type::Array(ref t2, -1) = b {
             check_types(t1, t2)
         } else if let &Type::Array(ref t2, ref size2) = b {
@@ -787,6 +868,7 @@ fn check_types(a: &Type, b: &Type) -> bool {
     }
 }
 
+// palauttaa truen tai falsen riippuen siitä, onko symboli varattu sana vai ei
 fn check_identifier(ident: &String) {
     let is_keyword = match &ident[..] {
         "or" => true,
@@ -814,10 +896,11 @@ fn check_identifier(ident: &String) {
     }
 }
 
+// analysoi lohkon
 fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
-    nt.push();
+    nt.push(); // uusi scope
     let mut block_count = 0;
-    for stmt in &mut *block {
+    for stmt in &mut *block { // käydään läpi lauseet ja etsitään määritykset (definition) (pass 1)
         if let &mut Statement::Definition(ref mut def) = stmt {
             let name = match def {
                 &mut Definition::Function(ref name, ref mut params, _, _) => {
@@ -848,10 +931,10 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
                 },
                 &mut Definition::Variable(Parameter { name: ref name, .. }) => name
             };
-            nt.peek().insert(name.clone(), def.clone());
+            nt.peek().insert(name.clone(), def.clone()); // lisätään määritelmä symbolitauluun
         }
         match stmt {
-            &mut Statement::Block(_) => block_count += 1,
+            &mut Statement::Block(_) => block_count += 1, // pidetään kirjaa lohkojen määrästä
             &mut Statement::Definition(_) => {}
             _ => {
                 if is_top {
@@ -882,16 +965,20 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
         }
     }
     
+    // analysoidaan lohkon lauseet (pass 2)
     for stmt in block {
         analyse_stmt(stmt, nt, false);
     }
     nt.pop();
 }
 
+// analysoi yhden lauseen
 fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
     match stmt {
         &mut Statement::Definition(Definition::Function(ref name, ref params, ref return_type, ref mut body)) => {
-            check_identifier(name);
+            check_identifier(name); // tarkistetaan, että nimi ei ole avainsana
+            
+            // luodaan uusi symbolitaulu ja lisätään siihen näkyvissä olevat funktiot ja proseduurit
             let mut new_nt = Nametable::new(return_type.clone());
             new_nt.push();
             for map in &nt.stack {
@@ -901,16 +988,20 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
                     }
                 }
             }
+            // lisätään parametrit (sisältää nonlokaalit)
             nt.push();
             for param in &*params {
                 new_nt.peek().insert(param.name.clone(), Definition::Variable(param.clone()));
             }
             
+            // analysoidaan vartalo
             analyse_stmt(&mut *body.borrow_mut(), &mut new_nt, false);
         }
         &mut Statement::Definition(Definition::Variable(ref par)) => {
-            check_identifier(&par.name);
+            check_identifier(&par.name); // tarkistetaan, että nimi ei ole avainsana
         }
+        
+        // muille lauseille analysoidaan rekursiivisesti alilauseet ja lausekkeet, sekä tehdään muut tarpeelliset tarkistukset
         &mut Statement::Block(ref mut stmts) => {
             analyse_block(stmts, nt, is_top);
         }
@@ -946,8 +1037,10 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
     }
 }
 
+// analysoi lausekkeen
 fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
     match &mut *expr.expr {
+        // analysoidaan alilausekkeet ja tehdään tarpeelliset tarkistukset:
         &mut Expression::BiOperator(ref op, ref mut a, ref mut b) => {
             analyse_expr(a, nt);
             analyse_expr(b, nt);
@@ -992,6 +1085,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
         &mut Expression::Assign(ref mut var, ref mut val) => {
             analyse_expr(var, nt);
             analyse_expr(val, nt);
+            // tarkistetaan, että lval (var) on muuttuja tai taulukkoindeksi
             match &mut *var.expr {
                 &mut Expression::Variable(ref name, _) => {
                     if let Some(&Definition::Variable(Parameter { vtype: ref t, .. })) = nt.find_definition(&name) {
@@ -1031,6 +1125,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 // ok
             }
             else if let Some(&Definition::Function(_, ref params, _, _)) = nt.find_definition(&name) {
+                // tarkistetaan argumenttien tyypit
                 for (ref mut arg, ref param) in args.iter_mut().zip(params.iter()) {
                     if !check_types(&arg.etype, &param.vtype) {
                         eprintln!("Semantic error: Type mismatch: wrong argument type for param {} of function {}: expected {}, got {}", param.name, name, param.vtype, arg.etype);
@@ -1068,12 +1163,13 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
     expr.etype = predict_type(expr, nt);
 }
 
+// määrittää lausekkeen tyypin
 fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
     match *expr.expr {
         Expression::Integer(_) => Type::Integer,
         Expression::Real(_) => Type::Real,
         Expression::String(_) => Type::String,
-        Expression::BiOperator(BinaryOperator::Add, ref a, _) => a.etype.clone(),
+        Expression::BiOperator(BinaryOperator::Add, ref a, _) => a.etype.clone(), // tyyppi on sama kuin operandien tyyppi
         Expression::BiOperator(BinaryOperator::Sub, ref a, _) => a.etype.clone(),
         Expression::BiOperator(BinaryOperator::Mul, ref a, _) => a.etype.clone(),
         Expression::BiOperator(BinaryOperator::Div, ref a, _) => a.etype.clone(),
@@ -1126,6 +1222,7 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
 // CODE GENERATION ///////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 
+// muuttaa tyypin C:ksi
 impl Type {
     fn to_c(&self, var: &String) -> String {
         match *self {
@@ -1140,6 +1237,7 @@ impl Type {
     }
 }
 
+// muuttaa parametrin tai muuttujan C:ksi (dereferensoi, jos kyseessä on var-parametri)
 impl Parameter {
     fn to_c(&self) -> String {
         if self.is_ref {
@@ -1150,6 +1248,7 @@ impl Parameter {
     }
 }
 
+// muuttaa operaattorin C:ksi
 impl BinaryOperator {
     fn to_c(&self) -> String {
         String::from(
@@ -1172,6 +1271,7 @@ impl BinaryOperator {
     }
 }
 
+// muuttaa operaattorin C:ksi
 impl UnaryOperator {
     fn to_c(&self) -> String {
         String::from(
@@ -1185,12 +1285,13 @@ impl UnaryOperator {
     }
 }
 
+// sisältää koodigeneraattorin tilan
 struct CodeGenerator {
-    indent: usize,
-    var_counter: i8,
-    output: String,
-    header: String,
-    queue: Vec<(String, Definition)>
+    indent: usize,   // sisennystaso
+    var_counter: i8, // laskuri väliaikaismuuttujien nimeämistä varten
+    output: String,  // ulostulopuskuri
+    header: String,  // headerin ulostulopuskuri
+    queue: Vec<(String, Definition)> // käsiteltävien funktioiden ja proseduurien jono
 }
 
 impl CodeGenerator {
@@ -1204,19 +1305,23 @@ impl CodeGenerator {
         }
     }
     
+    // luo nimen uudelle väliaikaismuuttujalle tai labelille
     fn new_var(&mut self) -> String {
         self.var_counter += 1;
         format!("tmp{}", self.var_counter)
     }
     
+    // lisää rivin ulostulopuskuriin
     fn generate(&mut self, code: String) {
         self.output = format!("{}{}{}\n", self.output, " ".repeat(self.indent), code);
     }
     
+    // lisää rivin headerin ulostulopuskuriin
     fn generate_header(&mut self, code: String) {
         self.header = format!("{}{}{}\n", self.header, " ".repeat(self.indent), code);
     }
     
+    // lisää str-tyyppisen merkkijonon ulostulopuskuriin
     fn generate_str(&mut self, code: &str) {
         self.generate(String::from(code));
     }
@@ -1225,7 +1330,8 @@ impl CodeGenerator {
         if let Definition::Function(_, ref params, ref rtype, ref body) = def {
             let paramcodes: Vec<_> = params.iter().map(|p| p.to_c()).collect();
             let signature = format!("{}", rtype.to_c(&format!("{}({})", name, paramcodes.join(", "))));
-            self.generate_header(format!("{};", signature));
+            self.generate_header(format!("{};", signature)); // header-rivi
+            // varsinainen ulostulo:
             self.generate(format!("{} {{", signature));
             self.indent += 1;
             self.generate_stmt(&*body.borrow_mut());
@@ -1233,15 +1339,16 @@ impl CodeGenerator {
             self.generate_str("}");
         }
         else {
-            assert!(false);
+            assert!(false); // globaalit muuttujat käännetään main-funktion sisäisiksi paikallisiksi muuttujiksi, eikä niitä ole globaalilla tasolla C-koodissa
         }
     }
 
+    // kääntää lauseen
     fn generate_stmt(&mut self, stmt: &Statement) {
         match *stmt {
             Statement::Definition(Definition::Variable(ref par)) => {
                 self.generate(format!("{};", par.to_c()));
-                if let Type::Array(ref t, ref size) = par.vtype {
+                if let Type::Array(ref t, ref size) = par.vtype { // jos array-tyyppisellä muuttujalla on koko, alustetaan array
                     if *size != -1 {
                         self.generate(format!("{} = make_array({}, {});", par.name, size, t.to_c(&String::new())));
                     }
@@ -1324,13 +1431,13 @@ impl CodeGenerator {
                 tmp
             }
             Expression::Variable(ref name, ref is_ref) => {
-                if make_ref {
+                if make_ref { // jos lauseke on var-parametria vastaava argumentti, lauseke referensoidaan
                     if **is_ref {
                         format!("{}", name)
                     } else {
                         format!("&{}", name)
                     }
-                } else {
+                } else { // lauseketta ei referensoida
                     if **is_ref {
                         format!("*{}", name)
                     } else {
@@ -1340,14 +1447,16 @@ impl CodeGenerator {
             }
             Expression::Index(ref name, ref index) => {
                 let icode = self.generate_expr(index);
+                // generoidaan tarkistus taulukon koolle
                 self.generate(format!("assert(0 <= {} && {} < array_len({}));", icode, icode, name));
-                if make_ref {
+                if make_ref { // taulukko referensoidaan, jos se on var-parametria vastaava argumentti
                     format!("&{}[{}]", name, icode)
                 } else {
                     format!("{}[{}]", name, icode)
                 }
             }
             Expression::Call(ref name, ref args) => {
+                // sisäänrakennettu read-funktio
                 if name == "read" {
                     for arg in args {
                         let argcode = self.generate_expr(arg);
@@ -1364,7 +1473,8 @@ impl CodeGenerator {
                             _ => {}
                         }
                     }
-                    String::from("0")
+                    String::from("void")
+                // sisäänrakennettu writeln-funktio
                 } else if name == "writeln" {
                     let mut formatcodes = Vec::new();
                     let mut argcodes = Vec::new();
@@ -1381,11 +1491,13 @@ impl CodeGenerator {
                     }
                     self.generate(format!("printf(\"{}\\n\", {});", formatcodes.join(" "), argcodes.join(", ")));
                     String::from("void")
+                // tavallinen funktiokutsu
                 } else {
                     let mut argcodes = Vec::new();
                     for arg in args {
                         argcodes.push(self.generate_expr(arg));
                     }
+                    // luodaan väliaikaismuuttuja palautetulle arvolle vain, jos funktio on funktio eikä proseduuri
                     if etype == Type::Void {
                         self.generate(format!("{}({});", name, argcodes.join(", ")));
                         String::from("void")
