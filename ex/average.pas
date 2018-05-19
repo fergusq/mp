@@ -1,6 +1,7 @@
 program average;
 
-procedure readnums(nums : array of integer);
+{* lukee lukuja annettuun taulukkoon *}
+procedure readnums(nums : array of real);
 begin
     var i : integer;
     i := 0;
@@ -11,16 +12,24 @@ begin
 end;
 
 begin
-    writeln("Give 4 values");
-    var nums : array[4] of integer;
+    var n : integer;
+    
+    writeln("Give N:");
+    read(n);
+    
+    writeln("Give", n, "values:");
+    
+    var nums : array of real;
+    nums := make_real_array(n);
     readnums(nums);
-    var sum : integer;
-    sum := 0;
+    
+    var sum : real;
+    sum := 0.0;
     var i : integer;
     i := 0;
-    while i < 4 do begin
+    while i < n do begin
         sum := sum + nums[i];
         i := i + 1;
     end;
-    writeln(sum/4);
+    writeln(sum/integer_to_real(n));
 end.
