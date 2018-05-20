@@ -136,14 +136,21 @@ Below are simplified version of the enums used in the compiler. (For exact versi
 	Definition { Function(String, Parameter[], Type, Statement), Variable(Parameter) }
 	Parameter { String name, Type type, boolean is_ref }
 	
-	Statement { Definition(Definition), SimpleReturn, Return(ExpressionBox),
-	            IfElse(ExpressionBox, Statement, Statement), While(ExpressionBox, Statement),
-	            Block(Statement[]), Expression(ExpressionBox), Nop }
+	Statement { Definition(Definition),
+	            SimpleReturn, Return(ExpressionBox),
+	            IfElse(ExpressionBox, Statement, Statement),
+	            While(ExpressionBox, Statement),
+	            Block(Statement[]),
+	            Expression(ExpressionBox), Nop }
 	
 	ExpressionBox { Expression expr, Type type, boolean make_ref }
-	Expression { Integer(int), Real(float), String(String), Assign(ExpressionBox, ExpressionBox),
-                     BiOperator(BinaryOperator, ExpressionBox, ExpressionBox), UnOperator(UnaryOperator, ExpressionBox),
-                     Call(String, ExpressionBox[]), Index(String, ExpressionBox), Variable(String, boolean) }
+	Expression { Integer(int), Real(float), String(String),
+	             Assign(ExpressionBox, ExpressionBox),
+                     BiOperator(BinaryOperator, ExpressionBox, ExpressionBox),
+                     UnOperator(UnaryOperator, ExpressionBox),
+                     Call(String, String, ExpressionBox[]),
+                     Index(String, ExpressionBox),
+                     Variable(String, boolean) }
         
         BinaryOperator { Eq, Neq, Lt, Leq, Gt, Geq, Add, Sub, Mul, Div, Mod, And, Or }
         UnaryOperator { Plus, Minus, Not, Size }
@@ -156,8 +163,9 @@ Things to note:
 * A variable declaration with multiple variables is expanded to multiple statements.
 * ``ExpressionBox`` is a wrapper type that contains fields that all expression share, namely the type and a boolean that tells if the expression should be made a reference (see semantics chapter).
 * There is no separate If and If-Else. An If without an Else is an If-Else where the Else block is a nop.
-* Assignment is an expression, and its left side is also an expression. The parser ensures that the left side is either a variable or an array subscript.
+* Assignment is an expression, and its left side is also an expression. The parser ensures that the left side is either a variable, an array subscript or a function call. During the semantic analysis an error is given if it was a function call.
 * There are both ``SimpleReturn`` (for procedures) and ``Return`` (for functions).
+* Calls have two string fields. The first is the name of the function in the Mini-Pascal source code. The second is initialized during the semantic analysis to be the name of the C function the function was compiled to.
 * Variables have a boolean field that is initially false and is changed to true during semantic analysis if the variable is a reference (var parameter).
 
 Semantic analysis
@@ -208,6 +216,9 @@ like local functions and procedures.
 Procedure and function calls
 ----------------------------
 
+For each function and procedure in AST, the name of the function is changed to be the mangled version that will be the name of the C function.
+For each function and procedure call, the mangled name is inserted into the second string field (see the AST in previous chapter).
+
 If the called procedure or function is local (defined inside a ``begin..end`` block),
 the variables in its block will be added to its parameter list as var parameters (AST is modified).
 Consequently, when a local procedure or function is called, the variables will be added as arguments to the function.
@@ -220,11 +231,17 @@ The following semantics are **not** included, although they should be:
 * Assignment is used only at the statement level and not as an expression. (*)
 * Array types do not contain arrays. (*)
 
+Due to a bug, the case where a function has been given too few arguments is handled incorrectly.
+In this situation, a wrong error message is given or, in the worst case, no error message is given and the program compiles succesfully.
+
 Code generation
 ===============
 
 Shortcomings
 ------------
+
+Target code problems
+````````````````````
 
 The MPC generates simplified C code.
 However, some restrictions mentioned in the project assignment are broken.
@@ -236,6 +253,17 @@ However, some restrictions mentioned in the project assignment are broken.
   * Macros that are used to implement some features. Macros do not even try to be simplified C. 
 
 2. Array indexing, variable referencing and dereferencing are used like they were simple variables. For example, if ``a`` is an integer var parameter, ``a := a + b`` is compiled to ``int tmp1 = *a + b; *a = tmp1;``. Similarly, ``a[1] := a[1] + b`` is compiled to ``int tmp2 = a[1] + b; a[1] = tm2;``. Indexing, referencing and dereferencing was left as it is due to ease of implementation and because there was not enough time to do the implementation as specified.
+
+Name mangling problems
+``````````````````````
+
+Variable names are mangled by prefixing them with ``_``.
+Collisions shouldn't be a problem in most cases as all variables will be generated as local C variables.
+
+Function name collisions, however, could be a problem.
+They are mangled by appending a scope identifier at the end of the name.
+In certain cases, when creating functions inside blocks (which is possible but not allowed by Mini-Pascal Spring 2018 specification),
+it is possible to create two functions with the same name.
 
 Statement generation
 --------------------
@@ -351,21 +379,33 @@ In addition to shortcomings listed in other chapters, this MPC does not allow st
 Builtin functions
 =================
 
-**``read(vars...)``** takes variable number of arguments (that should be either variables or array subscripts).
+**read(vars...)** takes variable number of arguments (that should be either variables or array subscripts).
 It will read a value from the standard input for each variable. The value is converted to the type of the variable.
 Only integer, real and string variables are supported.
 
-**``writeln(vals...)``** takes variable number of integer, real or string arguments.
+**writeln(vals...)** takes variable number of integer, real or string arguments.
 It will print them separated with spaces and followed by a newline.
 
-**``integer_to_real(val)``** converts an integer to a real.
+**integer_to_real(val)** converts an integer to a real.
 
-**``real_to_integer(val)``** converts a real to an integer, rounding when necessary.
+**real_to_integer(val)** converts a real to an integer, rounding when necessary.
 
-**``make_boolean_array(size)``** allocates a new boolean array with the given size.
+**make_boolean_array(size)** allocates a new boolean array with the given size.
 
-**``make_integer_array(size)``** allocates a new integer array with the given size.
+**make_integer_array(size)** allocates a new integer array with the given size.
 
-**``make_real_array(size)``** allocates a new real array with the given size.
+**make_real_array(size)** allocates a new real array with the given size.
 
-**``make_string_array(size)``** allocates a new string array with the given size.
+**make_string_array(size)** allocates a new string array with the given size.
+
+Tests
+=====
+
+Tests are located in the ``test`` directory.
+Tests can be run with the following commands::
+
+	cd test
+	./test-arrays.sh
+	./test-control-structures.sh
+	./test-functions.sh
+	./test-semantic-errors.sh
