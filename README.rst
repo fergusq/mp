@@ -5,6 +5,8 @@
 Iikka Hauhio,
 Code Generation Spring 2018
 
+.. sectnum::
+
 .. contents:: Table of Contents
    :backlinks: none
 
@@ -44,11 +46,13 @@ The compiler will output a warning if the input program uses them.
 The main components of the compiler are the scanner, the parser, the analyser and the code generator.
 The following chapters will describe these components.
 
-Below is a diagram that contains the most important structs and enums of the compiler.
-Unfortunately it isn't UML. I don't know how I should have marked Rust enums in UML.
-In this picture, an arrow means "contains".
+.. figure:: arch.png
+	:width: 100%
+	:alt: The structs and enums of the MPC
 
-.. image:: arch.png
+	A diagram that contains the most important structs and enums of the compiler.
+	Unfortunately it isn't UML. I don't know how I should have marked Rust enums in UML.
+	In this picture, an arrow means "contains".
 
 Lexical grammar
 ===============
@@ -113,13 +117,20 @@ Specifically:
 	            | "while" EXPRESSION "do" STATEMENT
 	            | EXPRESSION
 	
-	DEFINITION ::= "procedure" IDENTIFIER "(" (PARAMETER ("," PARAMETER)*)? ")" ";" STATEMENT
-	             | "function" IDENTIFIER "(" (PARAMETER ("," PARAMETER)*)? ")" ":" TYPE ";" STATEMENT
+	DEFINITION ::= "procedure" IDENTIFIER
+	                 "(" (PARAMETER ("," PARAMETER)*)? ")"
+	                 ";" STATEMENT
+	             | "function" IDENTIFIER
+	                 "(" (PARAMETER ("," PARAMETER)*)? ")" ":" TYPE
+	                 ";" STATEMENT
 	             | "var" IDENTIFIER ("," IDENTIFIER)* ":" TYPE
 	
 	PARAMETER ::= "var"? IDENTIFIER ":" TYPE
 	
-	TYPE ::= "integer" | "real" | "string" | "array" ("[" INTEGER-TOKEN "]")? "of" TYPE
+	TYPE ::= "integer"
+	       | "real"
+	       | "string"
+	       | "array" ("[" INTEGER-TOKEN "]")? "of" TYPE
 	
 	EXPRESSION ::= SIMPLE-EXPR (RELATIONAL-OPERATOR SIMPLE-EXPR)*
 	SIMPLE-EXPR ::= TERM (ADDITION-OPERATOR TERM)*
@@ -127,7 +138,12 @@ Specifically:
 	FACTOR ::= PRIMARY-EXPR ("." "size")?
 	PRIMARY-EXPR ::= "(" EXPRESSION ")"
 	               | UNARY-OPERATOR FACTOR
-	               | IDENTIFIER ("[" EXPRESSION "]" | "(" (EXPRESSION ("," EXPRESSION)*)? ")")? (":=" EXPRESSION)?
+	               | IDENTIFIER
+	                   (
+	                       "[" EXPRESSION "]"
+	                   |   "(" (EXPRESSION ("," EXPRESSION)*)? ")"
+	                   )?
+	                   (":=" EXPRESSION)?
 	               | INTEGER-TOKEN
 	               | REAL-TOKEN
 	               | STRING-TOKEN
@@ -149,7 +165,9 @@ Below are simplified version of the enums used in the compiler. (For exact versi
 
 	Type { Boolean, Integer, Real, String, Array(Type, int), Void, Error }
 	
-	Definition { Function(String, Parameter[], Type, Statement), Variable(Parameter) }
+	Definition { Function(String, Parameter[], Type, Statement),
+	             Variable(Parameter) }
+	
 	Parameter { String name, Type type, boolean is_ref }
 	
 	Statement { Definition(Definition),
@@ -168,7 +186,8 @@ Below are simplified version of the enums used in the compiler. (For exact versi
                      Index(String, ExpressionBox),
                      Variable(String, boolean) }
         
-        BinaryOperator { Eq, Neq, Lt, Leq, Gt, Geq, Add, Sub, Mul, Div, Mod, And, Or }
+        BinaryOperator { Eq, Neq, Lt, Leq, Gt, Geq,
+                         Add, Sub, Mul, Div, Mod, And, Or }
         UnaryOperator { Plus, Minus, Not, Size }
 
 ``Parameter`` and ``ExpressionBox`` are not enums but structs.
@@ -253,34 +272,6 @@ In this situation, a wrong error message is given or, in the worst case, no erro
 Code generation
 ===============
 
-Shortcomings
-------------
-
-Target code problems
-````````````````````
-
-The MPC generates simplified C code.
-However, some restrictions mentioned in the project assignment are broken.
-
-1. Parentheses are used in:
-
-  * Type casts ``(type)(expression)``
-  * Unary operator expressions: ``operator(expression)``. This is because the ``array_len`` (``.size``) operator is defined as a C macro and therefore needs parentheses.
-  * Macros that are used to implement some features. Macros do not even try to be simplified C. 
-
-2. Array indexing, variable referencing and dereferencing are used like they were simple variables. For example, if ``a`` is an integer var parameter, ``a := a + b`` is compiled to ``int tmp1 = *a + b; *a = tmp1;``. Similarly, ``a[1] := a[1] + b`` is compiled to ``int tmp2 = a[1] + b; a[1] = tm2;``. Indexing, referencing and dereferencing was left as it is due to ease of implementation and because there was not enough time to do the implementation as specified.
-
-Name mangling problems
-``````````````````````
-
-Variable names are mangled by prefixing them with ``_``.
-Collisions shouldn't be a problem in most cases as all variables will be generated as local C variables.
-
-Function name collisions, however, could be a problem.
-They are mangled by appending a scope identifier at the end of the name.
-In certain cases, when creating functions inside blocks (which is possible but not allowed by Mini-Pascal Spring 2018 specification),
-it is possible to create two functions with the same name.
-
 Statement generation
 --------------------
 
@@ -291,7 +282,7 @@ Control statements are generated with gotos.
 
 For example,
 
-::
+.. code:: pascal
 
 	var i : integer;
 	i := 0;
@@ -300,7 +291,9 @@ For example,
 	    i := i + 1
 	end;
 
-is compiled to::
+is compiled to:
+
+.. code:: c
 
 	int _i;
 	_i = 0;
@@ -332,7 +325,16 @@ Expression generation
 Generally, during the code generation the AST is recursively iterated.
 For each expression, a C statement is created that performs the calculation and assigns the answer to a new temporary variable.
 
-For example, the code ``var i : integer; i := (1 + 2) * (3 + 4);`` is compiled to::
+For example,
+
+.. code:: pascal
+
+	var i : integer;
+	i := (1 + 2) * (3 + 4);
+
+is compiled to:
+
+.. code:: c
 
 	int _i;
 	int tmp2 = 1 + 2;
@@ -340,29 +342,98 @@ For example, the code ``var i : integer; i := (1 + 2) * (3 + 4);`` is compiled t
 	int tmp1 = tmp2 * tmp3;
 	_i = tmp1;
 
-For some expression, a temporary variable is not created. These expression are:
+For some types of expression, a temporary variable is not created. These are:
 
 * Number and string literals
 * Variables
 * Array indexing (see above shortcomings)
 
 Array index compatibility
--------------------------
+`````````````````````````
 
 For each array subscript, an assert call is generated that checks that the index is within bounds.
 
+For example,
+
+.. code:: pascal
+
+	writeln(a[i])
+
+is compiled to:
+
+.. code:: c
+
+	assert(0 <= _i && _i < array_len(_a));
+	printf("%d\n", _a[_i]);
+
 References
-----------
+``````````
 
 Normally, when a var parameter is used, it is dereferenced.
 However, when a function or procedure call is generated, the arguments that correspond to var parameters (that have ``make_ref==true``) are referenced.
 This means that normal variables and array subscripts are prefixed with ``&`` and var parameters are used without ``*``.
 
+For example, when ``i`` is a normal variable, ``x`` is a var parameter, ``a`` is an array and all parameters of ``f`` are var parameters,
+
+.. code:: pascal
+
+	f(i, x, a[0])
+
+is compiled to:
+
+.. code:: c
+
+	f_1_1(&_i, _x, &_a[0]);
+
 Errors
-------
+``````
 
 A semantic errors causes the type of the expression to be ``Error``.
 The error type is compatible with all types and does not cause any type errors.
+
+Shortcomings
+------------
+
+Target code problems
+````````````````````
+
+The MPC generates simplified C code.
+However, some restrictions mentioned in the project assignment are broken.
+
+1. Parentheses are used in:
+
+  * Type casts ``(type)(expression)``
+  * Unary operator expressions: ``operator(expression)``. This is because the ``array_len`` (``.size``) operator is defined as a C macro and therefore needs parentheses.
+  * Macros that are used to implement some features. Macros do not even try to be simplified C. 
+
+2. Array indexing, variable referencing and dereferencing are used like they were simple variables.
+
+	For example, if ``a`` is an integer var parameter, ``a := a + b`` is compiled to:
+	
+	.. code:: c
+	
+		int tmp1 = *_a + _b;
+		*_a = tmp1;
+	
+	Similarly, ``a[1] := a[1] + b`` is compiled to:
+	
+	.. code:: c
+	
+		int tmp1 = _a[1] + _b;
+		_a[1] = tmp1;
+	
+	Indexing, referencing and dereferencing was left as it is due to ease of implementation and because there was not enough time to do the implementation as specified.
+
+Name mangling problems
+``````````````````````
+
+Variable names are mangled by prefixing them with ``_``.
+Collisions shouldn't be a problem in most cases as all variables will be generated as local C variables.
+
+Function name collisions, however, could be a problem.
+They are mangled by appending a scope identifier at the end of the name.
+In certain cases, when creating functions inside blocks (which is possible but not allowed by Mini-Pascal Spring 2018 specification),
+it is possible to create two functions with the same name.
 
 Errors
 ======
