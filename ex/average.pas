@@ -7,6 +7,10 @@ begin
     i := 0;
     while i < nums.size do begin
         read(nums[i]);
+        while (nums[i] < 1.0e-2) or (nums[i] > 1.0e2) do begin
+            writeln(nums[i], "is either too large or too small. Try again (enter number 0.01>=n>=100):");
+            read(nums[i]);
+        end;
         i := i + 1;
     end;
 end;
