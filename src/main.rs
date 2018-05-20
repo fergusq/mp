@@ -537,6 +537,18 @@ enum UnaryOperator {
     Plus, Minus, Not, Size
 }
 
+impl UnaryOperator {
+    fn allowed_types(&self) -> Vec<Type> {
+        let num_types = vec![Type::Integer, Type::Real];
+        match *self {
+            UnaryOperator::Plus => num_types,
+            UnaryOperator::Minus => num_types,
+            UnaryOperator::Not => vec![Type::Boolean],
+            UnaryOperator::Size => panic!("not implemented")
+        }
+    }
+}
+
 // parsii koko ohjelman
 fn parse_program(tokens: &mut TokenList) -> Statement {
     tokens.accept("program");
@@ -1056,7 +1068,7 @@ fn analyse_stmt(stmt: &mut Statement, nt: &mut Nametable, is_top: bool) {
         }
         &mut Statement::SimpleReturn => {
             if !check_types(&Type::Void, &nt.return_type) {
-                eprintln!("Semantic error: Type mismatch: incorrect return type, expected {}, got void", nt.return_type);
+                eprintln!("Semantic error: Type mismatch: incorrect return type: expected {}, got void", nt.return_type);
                 return;
             }
         }
@@ -1097,12 +1109,18 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 eprintln!("Semantic error: Type mismatch: {:?} expected {:?}, got {}", op, allowed_types, a.etype);
             }
         }
-        &mut Expression::UnOperator(UnaryOperator::Plus, ref mut a) => {
+        &mut Expression::UnOperator(UnaryOperator::Size, ref mut a) => {
             analyse_expr(a, nt);
-            if !check_types(&a.etype, &Type::Integer)
-                || !check_types(&a.etype, &Type::Real) {
-                eprintln!("Semantic error: Type mismatch: expected integer or real, got {}", a.etype);
-                return;
+            if let Type::Array(_, _) = a.etype {}
+            else {
+                eprintln!("Semantic error: Type mismatch: Size expected [Array], got {}", a.etype);
+            }
+        }
+        &mut Expression::UnOperator(ref op, ref mut a) => {
+            analyse_expr(a, nt);
+            let allowed_types = op.allowed_types();
+            if !allowed_types.contains(&a.etype) {
+                eprintln!("Semantic error: Type mismatch: {:?} expected {:?}, got {}", op, allowed_types, a.etype);
             }
         }
         &mut Expression::Variable(ref name, ref mut reference) => {
@@ -1134,7 +1152,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 &mut Expression::Variable(ref name, _) => {
                     if let Some(&Definition::Variable(Parameter { vtype: ref t, .. })) = nt.find_definition(&name) {
                         if !check_types(&val.etype, &t) {
-                            eprintln!("Semantic error: Type mismatch: lval {} has wrong type: expected {}, got {}", name, t, val.etype);
+                            eprintln!("Semantic error: Type mismatch: rval (after {} :=) has wrong type: expected {}, got {}", name, t, val.etype);
                             return;
                         }
                     }
@@ -1142,7 +1160,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 &mut Expression::Index(ref name, _) => {
                     if let Some(&Definition::Variable(Parameter { vtype: Type::Array(ref t, _), .. })) = nt.find_definition(&name) {
                         if !check_types(&val.etype, &t) {
-                            eprintln!("Semantic error: Type mismatch: lval has wrong type: expected {}, got {}", t, val.etype);
+                            eprintln!("Semantic error: Type mismatch: rval has wrong type: expected {}, got {}", t, val.etype);
                             return;
                         }
                     }
