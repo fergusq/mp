@@ -564,7 +564,7 @@ fn parse_block(tokens: &mut TokenList) -> Vec<Statement> {
     let mut stmts = Vec::new();
     stmts.extend(parse_statement(tokens));
     while tokens.try_accept(";") {
-        if tokens.next_in(["end", "."]) {
+        if tokens.next_in(&["end", "."]) {
             break;
         }
         stmts.extend(parse_statement(tokens))
