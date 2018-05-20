@@ -402,27 +402,26 @@ However, some restrictions mentioned in the project assignment are broken.
 
 1. Parentheses are used in:
 
-  * Type casts ``(type)(expression)``
-  * Unary operator expressions: ``operator(expression)``. This is because the ``array_len`` (``.size``) operator is defined as a C macro and therefore needs parentheses.
-  * Macros that are used to implement some features. Macros do not even try to be simplified C. 
+   * Type casts ``(type)(expression)``
+   * Unary operator expressions: ``operator(expression)``. This is because the ``array_len`` (``.size``) operator is defined as a C macro and therefore needs parentheses.
+   * Macros that are used to implement some features. Macros do not even try to be simplified C. 
 
 2. Array indexing, variable referencing and dereferencing are used like they were simple variables.
-
-	For example, if ``a`` is an integer var parameter, ``a := a + b`` is compiled to:
+   For example, if ``a`` is an integer var parameter, ``a := a + b`` is compiled to:
 	
-	.. code:: c
+   .. code:: c
 	
-		int tmp1 = *_a + _b;
-		*_a = tmp1;
+   	int tmp1 = *_a + _b;
+   	*_a = tmp1;
+   
+   Similarly, ``a[1] := a[1] + b`` is compiled to:
 	
-	Similarly, ``a[1] := a[1] + b`` is compiled to:
+   .. code:: c
 	
-	.. code:: c
-	
-		int tmp1 = _a[1] + _b;
-		_a[1] = tmp1;
-	
-	Indexing, referencing and dereferencing was left as it is due to ease of implementation and because there was not enough time to do the implementation as specified.
+   	int tmp1 = _a[1] + _b;
+   	_a[1] = tmp1;
+   
+   Indexing, referencing and dereferencing was left as it is due to ease of implementation and because there was not enough time to do the implementation as specified.
 
 Name mangling problems
 ``````````````````````
