@@ -286,15 +286,15 @@ For example,
 
 is compiled to::
 
-	int i;
-	i = 0;
+	int _i;
+	_i = 0;
 	tmp1:;
-	char tmp3 = i < 10;
+	char tmp3 = _i < 10;
 	if (!tmp3) goto tmp2;
 	{
-	 printf("%d\n", i);
-	 int tmp4 = i + 1;
-	 i = tmp4;
+	 printf("%d\n", _i);
+	 int tmp4 = _i + 1;
+	 _i = tmp4;
 	}
 	goto tmp1;
 	tmp2:;
@@ -318,11 +318,11 @@ For each expression, a C statement is created that performs the calculation and 
 
 For example, the code ``var i : integer; i := (1 + 2) * (3 + 4);`` is compiled to::
 
-	int i;
+	int _i;
 	int tmp2 = 1 + 2;
 	int tmp3 = 3 + 4;
 	int tmp1 = tmp2 * tmp3;
-	i = tmp1;
+	_i = tmp1;
 
 For some expression, a temporary variable is not created. These expression are:
 
