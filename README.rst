@@ -2,9 +2,7 @@
  Mini-Pascal Compiler
 ======================
 
-.. |time| date:: %d.%m.%Y %H.%M
-
-Iikka Hauhio, |time|,
+Iikka Hauhio, 20.5.2018,
 Code Generation Spring 2018
 
 .. sectnum::
