@@ -1326,9 +1326,9 @@ impl Type {
 impl Parameter {
     fn to_c(&self) -> String {
         if self.is_ref {
-            self.vtype.to_c(&format!("*{}", self.name))
+            self.vtype.to_c(&format!("*_{}", self.name))
         } else {
-            self.vtype.to_c(&self.name)
+            self.vtype.to_c(&format!("_{}", self.name))
         }
     }
 }
@@ -1435,7 +1435,7 @@ impl CodeGenerator {
                 self.generate(format!("{};", par.to_c()));
                 if let Type::Array(ref t, ref size) = par.vtype { // jos array-tyyppisellä muuttujalla on koko, alustetaan array
                     if *size != -1 {
-                        self.generate(format!("{} = make_array({}, {});", par.name, size, t.to_c(&String::new())));
+                        self.generate(format!("_{} = make_array({}, {});", par.name, size, t.to_c(&String::new())));
                     }
                 }
             }
@@ -1511,26 +1511,26 @@ impl CodeGenerator {
             Expression::Variable(ref name, ref is_ref) => {
                 if make_ref { // jos lauseke on var-parametria vastaava argumentti, lauseke referensoidaan
                     if **is_ref {
-                        format!("{}", name)
+                        format!("_{}", name)
                     } else {
-                        format!("&{}", name)
+                        format!("&_{}", name)
                     }
                 } else { // lauseketta ei referensoida
                     if **is_ref {
-                        format!("*{}", name)
+                        format!("*_{}", name)
                     } else {
-                        format!("{}", name)
+                        format!("_{}", name)
                     }
                 }
             }
             Expression::Index(ref name, ref index) => {
                 let icode = self.generate_expr(index);
                 // generoidaan tarkistus taulukon koolle
-                self.generate(format!("assert(0 <= {} && {} < array_len({}));", icode, icode, name));
+                self.generate(format!("assert(0 <= {} && {} < array_len(_{}));", icode, icode, name));
                 if make_ref { // taulukko referensoidaan, jos se on var-parametria vastaava argumentti
-                    format!("&{}[{}]", name, icode)
+                    format!("&_{}[{}]", name, icode)
                 } else {
-                    format!("{}[{}]", name, icode)
+                    format!("_{}[{}]", name, icode)
                 }
             }
             Expression::Call(ref name, ref mangled_name, ref args) => {
