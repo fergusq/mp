@@ -1,0 +1,4 @@
+program p;begin var i:integer;i:=5;if i>3 then writeln("OK");end.|OK
+program p;begin var i:integer;i:=5;if i<3 then writeln("FAIL")else writeln("OK");end.|OK
+program p;begin var i:integer;i:=0;while i<10 do begin writeln(i);i:=i+1;end;end.|0\n1\n2\n3\n4\n5\n6\n7\n8\n9
+program p;begin var i:integer;i:=7;while i<>1 do begin writeln(i); if i%2=0 then i:=i/2 else i:=i*3+1;end;end.|7\n22\n11\n34\n17\n52\n26\n13\n40\n20\n10\n5\n16\n8\n4\n2

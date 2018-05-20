@@ -21,7 +21,7 @@ main testmode, testfile {
 	nums := [seq(1, i)]&" "
 	if [ testmode = "output" ] do
 		push `
-		./bin/mp "$testdir/${dollar}test.pas" >tmp.c
+		../bin/mp "$testdir/${dollar}test.pas" >tmp.c
 		gcc tmp.c -o etmp && ./etmp >tmp.out
 		`
 	else
