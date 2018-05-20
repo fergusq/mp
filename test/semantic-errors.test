@@ -1,0 +1,24 @@
+program p;begin writeln(x)end.|Semantic error: Symbol not found: x\nSemantic error: x is not a variable but it is used like one
+program p;begin var var:integer end.|Warning: Program is not Mini-Pascal 2018 compliant: use of keyword as identifier
+program p;begin procedure f();begin writeln(1)end;end.|Warning: Program is not Mini-Pascal 2018 compliant: functions and procedures should be declared at the top level only
+program p;writeln("");begin writeln(1)end.|Warning: Program is not Mini-Pascal 2018 compliant: there should be only definitions and a block at the top level
+program p;begin 1 end.|Warning: Program is not Mini-Pascal 2018 compliant: expression statements should be either calls or assignments
+program p;begin writeln(1)end;begin writeln(1)end.|Warning: Program is not Mini-Pascal 2018 compliant: there should be only one block at the top level
+program p;begin writeln(1)end;var x:integer.|Warning: Program is not Mini-Pascal 2018 compliant: there should be a block at the end of the program
+program p;function f():real;begin return ""end;begin writeln(1)end.|Semantic error: Type mismatch: incorrect return type: expected real, got string
+program p;function f():real;begin return;end;begin writeln(1)end.|Semantic error: Type mismatch: incorrect return type: expected real, got void
+program p;begin if""then writeln("");end.|Semantic error: Type mismatch: if condition must be boolean: expected boolean, got string
+program p;begin while 2 do writeln("");end.|Semantic error: Type mismatch: while condition must be boolean: expected boolean, got integer
+program p;begin writeln(2+2.0)end.|Semantic error: Type mismatch: integer and real are not compatible
+program p;begin writeln(2 or 2)end.|Semantic error: Type mismatch: Or expected [Boolean], got integer
+program p;begin writeln((2).size)end.|Semantic error: Type mismatch: Size expected [Array], got integer
+program p;begin writeln(-"")end.|Semantic error: Type mismatch: Minus expected [Integer, Real], got string
+program p;procedure f();begin writeln(1)end;begin writeln(f)end.|Semantic error: f is not a variable but it is used like one
+program p;begin var a:array of real;writeln(a[2.0]);end.|Semantic error: Type mismatch: index of a must be integer
+program p;begin var a:integer;writeln(a[0])end.|Semantic error: Type mismatch: a is indexed but it is not an array
+program p;begin var i:integer;i:=2.0;end.|Semantic error: Type mismatch: rval (after i :=) has wrong type: expected integer, got real
+program p;begin var a:array[1]of real;a[0]:=1;end.|Semantic error: Type mismatch: rval has wrong type: expected real, got integer
+program p;procedure f();begin writeln(1)end;begin f():=2;end.|Semantic error: Left side of assignment is not lval
+program p;procedure f(i:integer);begin writeln(1)end;begin f(2.0)end.|Semantic error: Type mismatch: wrong argument type for param i of function f: expected integer, got real
+program p;procedure f(var r:real);begin writeln(1)end;begin f(2.0)end.|Semantic error: Argument corresponding to a var parameter must be either a variable or an array subscript
+program p;procedure f(r:real);begin writeln(1)end;begin f()end.|Semantic error: Wrong number of arguments given for f

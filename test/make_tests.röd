@@ -1,0 +1,44 @@
+main testmode, testfile {
+	unless [ testmode in ["output", "errors"] ] do
+		print "Usage: make_tests.röd (output|errors) <testfile>"
+		return
+	done
+	testdir := testfile
+	testdir ~= "\\.test", ""
+
+	unless fileExists testdir do
+		{}| exec "mkdir", testdir |{}
+	done
+
+	i := 0
+	readLines testfile | split sep=`\|` | for prog, output do
+		i ++
+		print prog | replace ";", ";\n" | writeStrings `$testdir/$i.pas`
+		print output | replace `\\n`, "\n" | writeStrings `$testdir/$i.out`
+	done
+
+	dollar := "$"
+	nums := [seq(1, i)]&" "
+	if [ testmode = "output" ] do
+		push `
+		./bin/mp "$testdir/${dollar}test.pas" >tmp.c
+		gcc tmp.c -o etmp && ./etmp >tmp.out
+		`
+	else
+		push `
+		../bin/mp "$testdir/${dollar}test.pas" >/dev/null 2>tmp.out
+                `
+	done | pull run_test
+	push `#!/bin/bash
+	for test in $nums; do
+		$run_test
+		if cmp --silent tmp.out "$testdir/${dollar}test.out"; then
+			echo "Test ${dollar}test: OK"
+		else
+			echo "Test ${dollar}test: failed"
+			diff "$testdir/${dollar}test.out" tmp.out
+		fi
+	done
+	` | writeStrings `test-$testdir.sh`
+	{}| exec "chmod", "+x", `test-$testdir.sh` |{}
+}
