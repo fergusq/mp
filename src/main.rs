@@ -157,7 +157,7 @@ impl TokenList {
 
     // palauttaa merkkijonon, jossa on rivinumero ja nykyinen token virheviestejä varten
     fn error_context(&self, place: usize) -> String {
-        let token = &self.tokens[if place == 0 {place} else {place-1}];
+        let token = &self.tokens[if place == 0 {place} else if place <= self.tokens.len() {place-1} else {self.tokens.len()-1}];
         format!("[line {}, token {:?}]", token.line, token.value)
     }
 
@@ -564,7 +564,7 @@ fn parse_block(tokens: &mut TokenList) -> Vec<Statement> {
     let mut stmts = Vec::new();
     stmts.extend(parse_statement(tokens));
     while tokens.try_accept(";") {
-        if tokens.next_is("end") {
+        if tokens.next_in(["end", "."]) {
             break;
         }
         stmts.extend(parse_statement(tokens))
