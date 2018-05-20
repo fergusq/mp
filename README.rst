@@ -336,6 +336,7 @@ Implementation choices
 In addition to the fact that this MPC implements a super set of Mini-Pascal Spring 2018,
 several other implementation-level decisions have been made where the language specification was ambigious.
 
+* Integers and reals have C types ``int`` and ``float`` respectively. Their exact size is unknown to the MPC.
 * Variables are uninitialized. Using an uninitialized variable results in undefined behaviour as in C.
 * It is not possible to allocate an array with a size that is not known compile-time. However, functions were added that can be used to allocate such arrays.
 * Arrays are allocated in heap and they are not deallocated in any case.
@@ -346,3 +347,25 @@ Missing features
 ================
 
 In addition to shortcomings listed in other chapters, this MPC does not allow string concatenation with the ``+`` operator.
+
+Builtin functions
+=================
+
+**``read(vars...)``** takes variable number of arguments (that should be either variables or array subscripts).
+It will read a value from the standard input for each variable. The value is converted to the type of the variable.
+Only integer, real and string variables are supported.
+
+**``writeln(vals...)``** takes variable number of integer, real or string arguments.
+It will print them separated with spaces and followed by a newline.
+
+**``integer_to_real(val)``** converts an integer to a real.
+
+**``real_to_integer(val)``** converts a real to an integer, rounding when necessary.
+
+**``make_boolean_array(size)``** allocates a new boolean array with the given size.
+
+**``make_integer_array(size)``** allocates a new integer array with the given size.
+
+**``make_real_array(size)``** allocates a new real array with the given size.
+
+**``make_string_array(size)``** allocates a new string array with the given size.
