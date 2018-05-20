@@ -1,0 +1,3 @@
+program p;begin var a:array[7]of boolean;writeln(a.size)end.|7
+program p;begin var a:array[2]of integer;a[0]:=1;a[1]:=2;writeln(a[0],a[1])end.|1 2
+program p;begin var a:array[10]of integer;var i:integer;i:=0;while i<a.size do begin a[i]:=i*2;i:=i+1;end;var s:integer;s:=0;i:=0;while i<a.size do begin s:=s+a[i];i:=i+1 end;writeln(s)end.|90
