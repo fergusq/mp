@@ -39,12 +39,12 @@ fn main() {
     // koodigeneraatio
     // ylätason koodi laitetaan uuden main-funktion sisään
     let mut cg = CodeGenerator::new();
-    cg.queue.push((String::from("main"), Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree)))));
+    cg.queue.push(Definition::Function(String::from("main"), Vec::new(), Type::Void, Rc::new(RefCell::new(tree))));
     while !cg.queue.is_empty() {
         let queue = cg.queue.clone();
         cg.queue.clear();
-        for (name, def) in queue {
-            cg.generate_def(name, def);
+        for def in queue {
+            cg.generate_def(def);
         }
     }
     
@@ -497,7 +497,7 @@ enum Expression {
     Assign(ExpressionBox, ExpressionBox),
     BiOperator(BinaryOperator, ExpressionBox, ExpressionBox),
     UnOperator(UnaryOperator, ExpressionBox),
-    Call(String, Vec<ExpressionBox>),
+    Call(String, String, Vec<ExpressionBox>),
     Index(String, ExpressionBox),
     Variable(String, Box<bool>)
 }
@@ -576,7 +576,7 @@ fn parse_block(tokens: &mut TokenList) -> Vec<Statement> {
 fn parse_type(tokens: &mut TokenList) -> Type {
     let typename = tokens.accept_identifier();
     match &typename[..] {
-        "Boolean" => Type::Boolean,
+        "boolean" => Type::Boolean,
         "integer" => Type::Integer,
         "real" => Type::Real,
         "string" => Type::String,
@@ -817,7 +817,7 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
                             }
                         }
                         tokens.accept(")");
-                        ExpressionBox::new(Expression::Call(word, args))
+                        ExpressionBox::new(Expression::Call(word, String::new(), args))
                     },
                     // arrayindeksointi
                     "[" => {
@@ -868,24 +868,40 @@ fn parse_factor(tokens: &mut TokenList) -> ExpressionBox {
 // symbolitaulutyyppi
 struct Nametable {
     stack: Vec<HashMap<String, Definition>>,
+    name_stack: Vec<i32>,
+    counter_stack: Vec<i32>,
     return_type: Type
 }
 
 impl Nametable {
     fn new(return_type: Type) -> Nametable {
-        Nametable { stack: Vec::new(), return_type: return_type }
+        Nametable { stack: Vec::new(), name_stack: Vec::new(), counter_stack: vec![0], return_type: return_type }
     }
     // lisää uuden "scopen"
     fn push(&mut self) {
         self.stack.push(HashMap::new());
+        let last_index = self.counter_stack.len()-1;
+        self.counter_stack[last_index] += 1;
+        self.name_stack.push(*self.counter_stack.last().unwrap());
+        self.counter_stack.push(0);
     }
     // poistaa ylimmän "scopen"
     fn pop(&mut self) {
         self.stack.pop();
+        self.name_stack.pop();
+        self.counter_stack.pop();
     }
     // palauttaa ylimmän "scopen"
     fn peek(&mut self) -> &mut HashMap<String, Definition> {
         self.stack.last_mut().unwrap()
+    }
+    // palauttaa nykyisen scopen nimen
+    fn current_path(&self) -> String {
+        let mut ans = String::new();
+        for n in &*self.name_stack {
+            write!(ans, "_{}", n).unwrap();
+        }
+        ans
     }
     // palauttaa symbolia vastaavan määritelmän
     fn find_definition(&self, name: &String) -> Option<&Definition> {
@@ -954,7 +970,7 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
     for stmt in &mut *block { // käydään läpi lauseet ja etsitään määritykset (definition) (pass 1)
         if let &mut Statement::Definition(ref mut def) = stmt {
             let name = match def {
-                &mut Definition::Function(ref name, ref mut params, _, _) => {
+                &mut Definition::Function(ref mut name, ref mut params, _, _) => {
                     if !is_top {
                         eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: functions and procedures should be declared at the top level only");
                     }
@@ -978,11 +994,16 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
                     // lisätään nonlokaalit parametreihin
                     params.extend(nonlocals);
                     
-                    name
+                    let old_name = name.clone();
+                    
+                    // lisätään nimen perään nykyisen scopen nimi
+                    write!(name, "{}", nt.current_path()).unwrap();
+                    
+                    old_name
                 },
-                &mut Definition::Variable(Parameter { ref name, .. }) => name
+                &mut Definition::Variable(Parameter { ref name, .. }) => name.clone()
             };
-            nt.peek().insert(name.clone(), def.clone()); // lisätään määritelmä symbolitauluun
+            nt.peek().insert(name, def.clone()); // lisätään määritelmä symbolitauluun
         }
         match stmt {
             &mut Statement::Block(_) => block_count += 1, // pidetään kirjaa lohkojen määrästä
@@ -996,7 +1017,7 @@ fn analyse_block(block: &mut Vec<Statement>, nt: &mut Nametable, is_top: bool) {
         if !is_top {
             if let &mut Statement::Expression(ref expr) = stmt {
                 match *expr.expr {
-                    Expression::Call(_, _) => {}
+                    Expression::Call(_, _, _) => {}
                     Expression::Assign(_, _) => {}
                     _ => {
                         eprintln!("Warning: Program is not Mini-Pascal 2018 compliant: expression statements should be either calls or assignments");
@@ -1171,7 +1192,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                 }
             }
         }
-        &mut Expression::Call(ref name, ref mut args) => {
+        &mut Expression::Call(ref name, ref mut mangled_name, ref mut args) => {
             if name != "assert" { // assert on avainsana, mutta sitä saa käyttää funktionimenä funktiota kutsuttaessa
                 check_identifier(name);
             }
@@ -1186,7 +1207,7 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
             else if name == "writeln" {
                 // ok
             }
-            else if let Some(&Definition::Function(_, ref params, _, _)) = nt.find_definition(&name) {
+            else if let Some(&Definition::Function(ref new_name, ref params, _, _)) = nt.find_definition(&name) {
                 // tarkistetaan argumenttien tyypit
                 for (ref mut arg, ref param) in args.iter_mut().zip(params.iter()) {
                     if !check_types(&arg.etype, &param.vtype) {
@@ -1218,6 +1239,9 @@ fn analyse_expr(expr: &mut ExpressionBox, nt: &Nametable) {
                         return;
                     }
                 }
+                
+                // muutetaan kutsun nimi vastaamaan manglattua nimeä
+                *mangled_name = new_name.clone();
             }
         }
         _ => {}
@@ -1264,7 +1288,7 @@ fn predict_type(expr: &ExpressionBox, nt: &Nametable) -> Type {
                 Type::Error
             }
         },
-        Expression::Call(ref name, _) => {
+        Expression::Call(ref name, _, _) => {
             if ["writeln", "read"].contains(&name.as_str()) {
                 Type::Void
             }
@@ -1352,7 +1376,7 @@ struct CodeGenerator {
     var_counter: i8, // laskuri väliaikaismuuttujien nimeämistä varten
     output: String,  // ulostulopuskuri
     header: String,  // headerin ulostulopuskuri
-    queue: Vec<(String, Definition)> // käsiteltävien funktioiden ja proseduurien jono
+    queue: Vec<Definition> // käsiteltävien funktioiden ja proseduurien jono
 }
 
 impl CodeGenerator {
@@ -1387,8 +1411,8 @@ impl CodeGenerator {
         self.generate(String::from(code));
     }
     
-    fn generate_def(&mut self, name: String, def: Definition) {
-        if let Definition::Function(_, ref params, ref rtype, ref body) = def {
+    fn generate_def(&mut self, def: Definition) {
+        if let Definition::Function(ref name, ref params, ref rtype, ref body) = def {
             let paramcodes: Vec<_> = params.iter().map(|p| p.to_c()).collect();
             let signature = format!("{}", rtype.to_c(&format!("{}({})", name, paramcodes.join(", "))));
             self.generate_header(format!("{};", signature)); // header-rivi
@@ -1416,14 +1440,7 @@ impl CodeGenerator {
                 }
             }
             Statement::Definition(ref f) /* f on Definition::Function */ => {
-                let tmp = self.new_var();
-                if let &Definition::Function(ref name, ref params, ref rtype, _) = f {
-                    let paramcodes: Vec<_> = params.iter().map(|p| p.to_c()).collect();
-                    self.generate(format!("{} = {};", rtype.to_c(&format!("(*{})({})", name, paramcodes.join(", "))), tmp));
-                } else {
-                    assert!(false);
-                }
-                self.queue.push((tmp, f.clone()));
+                self.queue.push(f.clone());
             }
             Statement::Block(ref stmts) => {
                 self.generate_str("{");
@@ -1516,7 +1533,7 @@ impl CodeGenerator {
                     format!("{}[{}]", name, icode)
                 }
             }
-            Expression::Call(ref name, ref args) => {
+            Expression::Call(ref name, ref mangled_name, ref args) => {
                 // sisäänrakennettu read-funktio
                 if name == "read" {
                     for arg in args {
@@ -1560,11 +1577,11 @@ impl CodeGenerator {
                     }
                     // luodaan väliaikaismuuttuja palautetulle arvolle vain, jos funktio on funktio eikä proseduuri
                     if etype == Type::Void {
-                        self.generate(format!("{}({});", name, argcodes.join(", ")));
+                        self.generate(format!("{}({});", mangled_name, argcodes.join(", ")));
                         String::from("void")
                     } else {
                         let tmp = self.new_var();
-                        self.generate(format!("{} = {}({});", etype.to_c(&tmp), name, argcodes.join(", ")));
+                        self.generate(format!("{} = {}({});", etype.to_c(&tmp), mangled_name, argcodes.join(", ")));
                         tmp
                     }
                 }
