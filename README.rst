@@ -19,6 +19,18 @@ It is also possible to use the precompiled Linux binary::
 
 	bin/mp ex/average.pas >average.c
 
+Tests
+-----
+
+Tests are located in the ``test`` directory.
+Tests can be run with the following commands::
+
+	cd test
+	./test-arrays.sh
+	./test-control-structures.sh
+	./test-functions.sh
+	./test-semantic-errors.sh
+
 Introduction
 ============
 
@@ -31,6 +43,10 @@ The compiler will output a warning if the input program uses them.
 
 The main components of the compiler are the scanner, the parser, the analyser and the code generator.
 The following chapters will describe these components.
+
+Below is a diagram that contains the most important structs and enums of the compiler.
+Unfortunately it isn't UML. I don't know how I should have marked Rust enums in UML.
+In this picture, an arrow means "contains".
 
 .. image:: arch.png
 
@@ -409,3 +425,22 @@ Tests can be run with the following commands::
 	./test-control-structures.sh
 	./test-functions.sh
 	./test-semantic-errors.sh
+
+Compiling tests
+---------------
+
+Tests are contained in ``.test`` files.
+Each such file contains one test per line.
+A test has a Mini-Pascal program and the desired output, separated by a ``|`` character.
+
+``.test`` files must be compiled using ``make_tests.röd``::
+
+	röda make_tests.röd output arrays.test
+	röda make_tests.röd output control-structures.test
+	röda make_tests.röd output functions.test
+	röda make_tests.röd errors semantic-errors.test
+
+``output`` tells the script that the desired output will be in the standard output of the compiled Mini-Pascal program.
+``errors`` tells the script that the desired output will be in the standard error of the compiler.
+
+The Röda script makes a shell script and a directory, that contains each test program and desired output.
