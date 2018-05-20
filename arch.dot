@@ -29,9 +29,9 @@ digraph G {
     Definition -> Statement [arrowhead=vee];
     Statement -> ExpressionBox [arrowhead=vee];
     
-    Nametable [shape=box,label="Nametable\n- stack: Vec<HashMap<String, Definition>>"];
+    Nametable [shape=box,label="Nametable\n- stack: Vec<HashMap<String, Definition>>\n- name_stack: Vec<i32>\n- counter_stack: Vec<i32>\nreturn_type: Type"];
     Nametable -> Definition [arrowhead=vee];
     
-    CodeGenerator [shape=box,label="CodeGenerator\n- indent: usize\n- var_counter: i8\n- output: String\n- header: String\n- queue: Vec<(String, Definition)>"];
+    CodeGenerator [shape=box,label="CodeGenerator\n- indent: usize\n- var_counter: i8\n- output: String\n- header: String\n- queue: Vec<Definition>"];
     CodeGenerator -> Definition [arrowhead=vee];
 }
